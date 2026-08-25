@@ -6,3 +6,7 @@ __pycache__/
 
 # Recorded market data — the archive lives on disk, not in git
 data_recorded/
+
+# Frontend build tooling
+app/node_modules/
+app/dist/
