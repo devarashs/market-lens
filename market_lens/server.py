@@ -475,12 +475,13 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
-async def index_handler(_: web.Request) -> web.FileResponse:
-    return web.FileResponse(WEB_DIR / "index.html")
-
-
-async def docs_handler(_: web.Request) -> web.FileResponse:
-    return web.FileResponse(WEB_DIR / "docs.html")
+async def index_handler(_: web.Request) -> web.StreamResponse:
+    index = WEB_DIR / "index.html"
+    if not index.exists():
+        # A fresh clone has no build yet — say so instead of a bare 404.
+        return web.Response(
+            status=503, text="UI not built: run `cd app && npm install && npm run build`")
+    return web.FileResponse(index)
 
 
 @web.middleware
@@ -497,13 +498,14 @@ async def no_cache_middleware(request: web.Request, handler):
 def build_app() -> web.Application:
     app = web.Application(middlewares=[no_cache_middleware])
     app.router.add_get("/", index_handler)
-    app.router.add_get("/docs", docs_handler)
     app.router.add_get("/ws", ws_handler)
     app.router.add_get("/klines", klines_handler)
-    app.router.add_static("/web/", WEB_DIR)
-    # SPA deep links: /BTC, /SOL/15m, … all serve the app; the client-side
-    # router (History API) reads the path. Registered last so /ws, /klines,
-    # and /web/ keep winning.
+    assets_dir = WEB_DIR / "assets"
+    if assets_dir.exists():  # absent until the first `npm run build`
+        app.router.add_static("/assets/", assets_dir)
+    # SPA deep links: /BTC, /SOL/15m, /docs, … all serve the app; the
+    # client-side router reads the path. Registered last so /ws, /klines,
+    # and /assets/ keep winning.
     app.router.add_get("/{tail:.*}", index_handler)
     return app
 

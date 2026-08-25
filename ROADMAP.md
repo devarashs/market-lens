@@ -35,6 +35,43 @@ nothing Done unverified).
 - [ ] Symbol add/remove from the UI (config-only today)
 - [ ] Price alerts (browser notifications on level cross)
 
+## L1.5 — Proper-stack client rebuild *(Arash 2026-08-25: "laggy, things
+disappear, reload to get it back — move to a proper stack, choose one")*
+
+Diagnosis (from web/app.js as shipped): no rAF batching — every 400ms depth
+push runs DOM + two-canvas redraws synchronously (the lag); socket has no
+onerror, no staleness watchdog, and one unguarded onmessage where a single
+throw silently kills a message type (the "disappears until reload"); 830
+lines of global mutable state make it unfixable in place.
+
+Stack chosen: **Vite + React 19 + TypeScript + Tailwind v4 + Zustand +
+React Router + lightweight-charts (npm, v4 line) + Vitest.** Plain React
+over Next.js deliberately: all-client realtime canvas app, no SSR/SEO
+surface, and prod stays a single Python process serving static `app/dist`
+— no Node runtime on the VPS. Assumptions: the Python collector stays
+(symptoms are all client-side; it was just verified onto SQLite), and the
+existing visual design is kept — it is the established convention.
+
+- [x] Scaffold `app/` (Vite/TS/Tailwind tokens ported from style.css)
+- [x] Data layer: typed messages, LensSocket (backoff+jitter reconnect,
+      resubscribe, 10s staleness watchdog, per-message error isolation),
+      Zustand store, pure candle/MA/format libs — unit tested
+- [x] Chart + overlays: LWC lifecycle component, ported canvas draw
+      functions, rAF-driven overlay loop decoupled from React renders
+- [x] Full UI parity: header/metrics/readout/signals/footer toggles
+      (layers, MAs, venues), tape panel, docs route with search, routing,
+      prefs, PNG export, shortcuts, beep
+- [x] Server serves `app/dist`; legacy `web/` removed
+- [x] Verified: build clean, tests green, browser walk of chart/toggles/
+      symbol+timeframe switching/docs/reconnect-after-server-restart
+
+All verified 2026-08-26: 25 Vitest + 26 pytest green, browser walk done
+(routing, toggles, shortcuts, docs search, HYPE 1s guard) and the reported
+failure reproduced+fixed: server killed under a live page -> "reconnecting",
+server back -> same page instance auto-recovers, reseeds 120 tape rows.
+Overlay geometry pinned by unit tests; on-screen paint re-checked in the
+pane at next opportunity (rAF is suspended while the pane is hidden).
+
 ## L2 — History *(needs L0 archive)*
 
 - [ ] Liquidity heatmap over time (the Bookmap-style view)

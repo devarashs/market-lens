@@ -17,10 +17,14 @@ and tape-pressure features are tracked in the arena's strategy book).
 ```bash
 python -m venv .venv
 .venv/Scripts/pip install -r requirements.txt   # (.venv/bin/pip on Linux)
+cd app && npm install && npm run build && cd ..  # build the UI once
 .venv/Scripts/python -m market_lens
 ```
 
-Then open **http://127.0.0.1:8899** — localhost only by design.
+Then open **http://127.0.0.1:8899** — localhost only by design. The server
+serves the prebuilt UI from `app/dist`, so production needs no Node. For UI
+work: `cd app && npm run dev` (HMR, proxied to the collector on 8899);
+`npm test` runs the frontend unit tests.
 
 - Symbols: BTC, ETH, SOL, BNB, DOGE, HYPE (add more in `market_lens/config.py`)
 - Venues: Binance spot + Hyperliquid perps (adapter pattern in
@@ -41,8 +45,13 @@ migrates the old files once, then they can be deleted.
 
 ## Stack note
 
-Vanilla JS + vendored [TradingView Lightweight Charts](https://www.tradingview.com/lightweight-charts/)
-(Apache-2.0, attribution in the footer), served by the Python collector
-itself — deliberately no framework or build step at MVP stage per the
-house doctrine ("plain over more-than-needed"); graduates to Next.js when
-UI complexity earns it. Not financial advice; a visualization tool.
+The UI (`app/`) is React 19 + TypeScript, built with Vite: Zustand as the
+single client-state authority, React Router for URLs, Tailwind v4 carrying
+the design tokens, and [TradingView Lightweight Charts](https://www.tradingview.com/lightweight-charts/)
+(Apache-2.0, attribution in the footer) bundled from npm. Rebuilt from the
+vanilla-JS MVP on 2026-08-25 when its complexity outgrew one file — the
+rebuild's architecture notes live in the in-app docs under "Architecture".
+Plain React over Next.js deliberately: an all-client realtime app with no
+SSR surface, deployed as static files served by the Python collector — one
+process in production, no Node runtime. Not financial advice; a
+visualization tool.

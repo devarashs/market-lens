@@ -11,7 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-WEB_DIR = REPO_ROOT / "web"
+# The built React app (app/ is the source; `cd app && npm run build`
+# produces dist/). The server serves static files only — no Node in prod.
+WEB_DIR = REPO_ROOT / "app" / "dist"
 RECORD_DIR = REPO_ROOT / "data_recorded"
 
 HTTP_PORT = 8899
