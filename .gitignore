@@ -1,0 +1,8 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Recorded market data — the archive lives on disk, not in git
+data_recorded/

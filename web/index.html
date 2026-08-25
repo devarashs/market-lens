@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Market Lens</title>
+<link rel="stylesheet" href="/web/style.css?v=5">
+</head>
+<body>
+<header class="top">
+  <h1>Market Lens</h1>
+  <nav id="symbols" aria-label="Symbols"></nav>
+  <nav id="timeframes" aria-label="Timeframes"></nav>
+  <select id="chart-style" class="mini-btn" aria-label="Chart style">
+    <option value="candles">Candles</option>
+    <option value="heikin">Heikin-Ashi</option>
+    <option value="bars">Bars</option>
+    <option value="line">Line</option>
+    <option value="area">Area</option>
+  </select>
+  <a class="mini-btn" href="/docs" title="Documentation">docs</a>
+  <span id="status" class="status">connecting…</span>
+</header>
+<div class="metrics" id="metrics">
+  <span class="muted">loading metrics…</span>
+</div>
+<div class="readout muted" id="readout">hover the chart to inspect a price level</div>
+<div class="signals" id="signals"><span class="muted">readers warming up…</span></div>
+<main class="layout">
+  <section class="chart-wrap">
+    <canvas id="under-overlay"></canvas>
+    <div id="chart"></div>
+    <canvas id="overlay"></canvas>
+    <div class="chart-footer">
+      <div class="footer-row">
+        <span id="imbalance" class="gauge"></span>
+        <span id="pressure" class="gauge"></span>
+        <span id="spread" class="gauge muted"></span>
+        <span id="venue-toggles"></span>
+        <label class="muted toggle"><input type="checkbox" id="beep-toggle"> monster alert</label>
+        <button id="export" class="mini-btn" title="Save chart as PNG">PNG</button>
+      </div>
+      <div class="footer-row" id="layer-row">
+        <span class="muted row-label">layers</span>
+        <label class="muted toggle"><input type="checkbox" id="candles-toggle" checked> candles</label>
+        <label class="muted toggle"><input type="checkbox" id="trades-toggle" checked> trades</label>
+        <label class="muted toggle"><input type="checkbox" id="walls-toggle" checked> order lines</label>
+        <label class="muted toggle"><input type="checkbox" id="heat-toggle" checked> heatmap</label>
+        <label class="muted toggle"><input type="checkbox" id="profile-toggle" checked> profile</label>
+        <label class="muted toggle"><input type="checkbox" id="depth-toggle" checked> depth</label>
+        <label class="muted toggle"><input type="checkbox" id="cvd-toggle" checked> CVD</label>
+        <label class="muted toggle"><input type="checkbox" id="vwap-toggle" checked> VWAP</label>
+        <label class="muted toggle"><input type="checkbox" id="levels-toggle" checked> day levels</label>
+        <span class="muted row-label">MA</span>
+        <span id="ma-toggles"></span>
+      </div>
+    </div>
+  </section>
+  <aside class="tape" aria-label="Market structure panel">
+    <h2>Top walls <span class="muted">(resting, aggregated)</span></h2>
+    <table id="walls"><tbody></tbody></table>
+    <h2>Big trades
+      <span class="muted">≥ $<span id="threshold-label"></span></span>
+    </h2>
+    <input type="range" id="threshold" min="0.1" max="4" step="0.1" value="0.5"
+           aria-label="Big trade threshold multiplier">
+    <ul id="tape-list"></ul>
+  </aside>
+</main>
+<footer class="attribution muted">
+  Charting by <a href="https://www.tradingview.com/lightweight-charts/"
+  target="_blank" rel="noopener">TradingView Lightweight Charts</a> (Apache-2.0).
+  Data: Binance &amp; Hyperliquid public streams. Depth/heatmap = resting
+  <em>claims</em>; profile/CVD/tape = executed <em>facts</em>. Not financial advice.
+</footer>
+<script src="/web/vendor/lightweight-charts.standalone.js"></script>
+<script src="/web/app.js?v=6"></script>
+</body>
+</html>
