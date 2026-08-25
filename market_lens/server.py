@@ -11,7 +11,8 @@ Feature set (L1 "rich tool" sprint, 2026-08-25):
   heat       — in-memory ring of binned book snapshots (~1h @ 10s): the live
                liquidity heatmap, no disk history needed
   metrics    — funding, next funding, open interest, 24h change per symbol
-  recording  — depth snapshots (30s) + big trades to data_recorded/ (L0)
+  recording  — depth snapshots (30s) + big trades to data_recorded/lens.db
+               (SQLite via LensStore; replaced the L0 CSVs 2026-08-25)
 
 Protocol (server → client), all JSON over /ws after {"cmd":"subscribe",
 "symbol":..., "venues":[...]?}:
@@ -23,7 +24,6 @@ Protocol (server → client), all JSON over /ws after {"cmd":"subscribe",
 from __future__ import annotations
 
 import asyncio
-import csv
 import json
 import time
 from collections import defaultdict, deque
@@ -44,6 +44,7 @@ from market_lens.config import (
     SYMBOLS,
     WEB_DIR,
 )
+from market_lens.store import LensStore
 from market_lens.venues import (
     binance_adapter,
     bybit_adapter,
@@ -71,7 +72,7 @@ class SymbolAccumulators:
         self.pressure: deque[tuple[float, str, float]] = deque()  # (ts, side, notional)
         self.heat: deque[list] = deque(maxlen=HEAT_RING_LENGTH)   # [ts, bids, asks]
         # Recent above-floor trades kept in memory for chart seeding — the
-        # permanent CSV archive stays whales-only, but the chart wants
+        # permanent archive stays whales-only, but the chart wants
         # denser recent texture than whales alone provide.
         self.recent_trades: deque[dict] = deque(maxlen=800)
 
@@ -139,7 +140,7 @@ class LensState:
         payload = {"symbol": symbol, "venue": venue, **trade}
         self.accumulators[symbol].recent_trades.append(payload)
         if trade["notional"] >= threshold:
-            record_trade(symbol, venue, trade)
+            STORE.insert_trade(symbol, venue, trade)
         message = json.dumps({"type": "trade", **payload})
         for ws, sub in list(self.clients.items()):
             if sub["symbol"] == symbol and not ws.closed:
@@ -159,35 +160,9 @@ class LensState:
 
 
 STATE = LensState()
-
-
-# ------------------------------------------------------------------ recorder
-
-
-def record_trade(symbol: str, venue: str, trade: dict) -> None:
-    RECORD_DIR.mkdir(exist_ok=True)
-    path = RECORD_DIR / f"{symbol}_trades.csv"
-    new = not path.exists()
-    with path.open("a", newline="") as handle:
-        writer = csv.writer(handle)
-        if new:
-            writer.writerow(["ts", "venue", "side", "price", "size", "notional"])
-        writer.writerow([trade["ts"], venue, trade["side"], trade["price"],
-                         trade["size"], round(trade["notional"], 2)])
-
-
-def record_depth(symbol: str, profile: dict) -> None:
-    RECORD_DIR.mkdir(exist_ok=True)
-    path = RECORD_DIR / f"{symbol}_depth.csv"
-    new = not path.exists()
-    now_ms = int(time.time() * 1000)
-    with path.open("a", newline="") as handle:
-        writer = csv.writer(handle)
-        if new:
-            writer.writerow(["ts", "side", "price_bin", "notional_usd"])
-        for side in ("bids", "asks"):
-            for price, notional in profile[side][:25]:
-                writer.writerow([now_ms, side[:-1], price, notional])
+# The archive handle, module-level like STATE: the collector is the single
+# writer, and every insert happens on the event-loop thread that created it.
+STORE = LensStore(RECORD_DIR / "lens.db")
 
 
 # ------------------------------------------------------- background pollers
@@ -328,8 +303,9 @@ async def broadcast_depth_loop() -> None:
             books = STATE.books_for(symbol, None)
             if books:
                 spec = SYMBOLS[symbol]
-                record_depth(symbol, aggregate_books(books, spec.price_bin,
-                                                     DEPTH_BINS_PER_SIDE))
+                STORE.insert_depth_snapshot(
+                    symbol, int(time.time() * 1000),
+                    aggregate_books(books, spec.price_bin, DEPTH_BINS_PER_SIDE))
                 last_recorded[symbol] = time.time()
 
         for (symbol, venue_key), sockets in wanted.items():
@@ -452,25 +428,6 @@ async def klines_handler(request: web.Request) -> web.Response:
 # ------------------------------------------------------------------ ws + app
 
 
-def recorded_big_trades(symbol: str, limit: int = 200) -> list[dict]:
-    """Tail of the L0 big-trade record — 'previous trades' for chart seeding.
-
-    Reads the whole CSV today; switch to a reverse reader when files grow
-    past a few MB (they rotate to the VPS before that matters).
-    """
-    path = RECORD_DIR / f"{symbol}_trades.csv"
-    if not path.exists():
-        return []
-    with path.open("r", newline="") as handle:
-        rows = list(csv.DictReader(handle))
-    return [
-        {"ts": int(row["ts"]), "venue": row["venue"], "side": row["side"],
-         "price": float(row["price"]), "size": float(row["size"]),
-         "notional": float(row["notional"])}
-        for row in rows[-limit:]
-    ]
-
-
 async def send_symbol_seed(ws: web.WebSocketResponse, symbol: str) -> None:
     """On (re)subscribe: recorded trades + heat ring + CVD + latest metrics."""
     accumulator = STATE.accumulators[symbol]
@@ -478,7 +435,7 @@ async def send_symbol_seed(ws: web.WebSocketResponse, symbol: str) -> None:
     # deduped (a whale exists in both) and capped, oldest first.
     seen: set[tuple] = set()
     merged: list[dict] = []
-    for trade in recorded_big_trades(symbol) + list(accumulator.recent_trades):
+    for trade in STORE.recent_trades(symbol, limit=200) + list(accumulator.recent_trades):
         key = (trade["ts"], trade["price"], trade["size"])
         if key not in seen:
             seen.add(key)

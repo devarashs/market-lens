@@ -30,11 +30,14 @@ Then open **http://127.0.0.1:8899** — localhost only by design.
 
 ## Recording (Phase L0 — the moat)
 
-While running, the server appends to `data_recorded/` (gitignored):
-binned depth snapshots every 30s and every big trade. This history has no
-free source anywhere — it only exists if we record it, which is why the
-collector should live on the 24/7 VPS eventually. CSV now; revisit format
-(parquet + rotation) when volumes demand.
+While running, the server records to SQLite at `data_recorded/lens.db`
+(gitignored): binned depth snapshots every 30s and every big trade. This
+history has no free source anywhere — it only exists if we record it,
+which is why the collector should live on the 24/7 VPS eventually.
+`market_lens/store.py` owns the schema (WAL mode, indexed on
+`(symbol, ts)`); retention is `LensStore.prune_before()` when disk ever
+matters. Upgrading from the CSV era: `python scripts/import_csv_archive.py`
+migrates the old files once, then they can be deleted.
 
 ## Stack note
 

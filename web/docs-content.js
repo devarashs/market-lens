@@ -35,7 +35,7 @@ only, by design. The status pill (top right) shows <b>live</b> when the
 browser is connected; it reconnects automatically after server restarts.</p>
 <p>Data flows in from public venue feeds with no keys or accounts; while the
 server runs it also records depth snapshots and big trades to
-<code>data_recorded/</code> (see Recording).</p>`,
+<code>data_recorded/lens.db</code> (see Recording).</p>`,
   },
   {
     id: "symbols-routing",
@@ -86,7 +86,7 @@ view exists for.</p>
 <p>Brightness scales with each column's largest level. Toggle with the
 footer checkbox or <b>h</b>. Caveat: the ring is in-memory, so it starts
 empty on server restart and fills over the following hour (the disk record
-in <code>data_recorded/</code> persists regardless).</p>`,
+in <code>data_recorded/lens.db</code> persists regardless).</p>`,
   },
   {
     id: "profile",
@@ -212,12 +212,18 @@ repo for the full survey.</p>`,
     id: "recording",
     title: "Recording (the archive)",
     body: `
-<p>While running, the server appends to <code>data_recorded/</code>: binned
-depth snapshots every 30s per symbol, and every big trade. This history has
-<b>no free source anywhere</b> — order-book history is only owned by whoever
-recorded it, which is why the collector should eventually live on an
-always-on server. The recorded trades already power the chart's history
-seeding; the depth archive will power the persistent (multi-day) heatmap.</p>`,
+<p>While running, the server records to a SQLite database at
+<code>data_recorded/lens.db</code>: binned depth snapshots every 30s per
+symbol, and every big trade. This history has <b>no free source
+anywhere</b> — order-book history is only owned by whoever recorded it,
+which is why the collector should eventually live on an always-on server.
+The recorded trades power the chart's history seeding (an indexed query,
+constant-time however large the archive grows); the depth table will power
+the persistent (multi-day) heatmap. Retention is a
+<code>prune_before(cutoff)</code> call away when disk ever matters —
+measured growth is roughly 20&nbsp;MB/day across all symbols. Upgrading
+from the CSV era: run <code>python scripts/import_csv_archive.py</code>
+once.</p>`,
   },
   {
     id: "shortcuts",

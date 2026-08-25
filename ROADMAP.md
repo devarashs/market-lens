@@ -5,11 +5,13 @@ nothing Done unverified).
 
 ## L0 — Record what cannot be re-bought *(agreed 2026-08-25)*
 
-- [~] Depth + big-trade recorder running inside the collector (CSV,
-      `data_recorded/`) — started with the MVP server; needs 24/7 hosting
-      (arena's VPS) to become a real archive
-- [ ] Move collector to the VPS alongside the arena's cycle; add rotation /
-      parquet when file sizes demand
+- [~] Depth + big-trade recorder running inside the collector — started
+      with the MVP server (CSV); moved to SQLite (`data_recorded/lens.db`,
+      `market_lens/store.py`, WAL, indexed on symbol+ts) 2026-08-25 so the
+      seed query stays constant-time and the multi-day heatmap gets its
+      range reads. Needs 24/7 hosting (arena's VPS) to become a real archive
+- [ ] Move collector to the VPS alongside the arena's cycle; pick a
+      retention window there (`LensStore.prune_before` is the hook)
 
 ## L1 — Rich tool *(agreed 2026-08-25; feature sprint same day)*
 
