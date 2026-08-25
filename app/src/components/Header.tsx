@@ -1,0 +1,76 @@
+import { Link, useNavigate } from "react-router-dom";
+
+import {
+  CHART_STYLES, NO_SECONDS, SYMBOLS, TIMEFRAMES, type ChartStyle,
+} from "../lib/config";
+import { useLensStore } from "../store/lens";
+
+const STYLE_LABELS: Record<ChartStyle, string> = {
+  candles: "Candles", heikin: "Heikin-Ashi", bars: "Bars", line: "Line", area: "Area",
+};
+
+const STATUS_LABELS = {
+  connecting: "connecting…", live: "live", reconnecting: "reconnecting…",
+  stale: "stale — reconnecting…",
+} as const;
+
+export function Header() {
+  const navigate = useNavigate();
+  const symbol = useLensStore((s) => s.symbol);
+  const timeframe = useLensStore((s) => s.timeframe);
+  const chartStyle = useLensStore((s) => s.chartStyle);
+  const connection = useLensStore((s) => s.connection);
+  const metrics = useLensStore((s) => s.metrics);
+  const setChartStyle = useLensStore((s) => s.setChartStyle);
+
+  return (
+    <header className="top">
+      <h1>Market Lens</h1>
+      <nav id="symbols" aria-label="Symbols">
+        {SYMBOLS.map((sym) => {
+          const change = metrics[sym]?.change24h;
+          return (
+            <button
+              key={sym}
+              className={sym === symbol ? "active" : ""}
+              onClick={() => navigate(`/${sym}/${timeframe}`)}
+            >
+              {sym}{" "}
+              {change !== undefined && (
+                <small className={change >= 0 ? "buy-c" : "sell-c"}>
+                  {change >= 0 ? "+" : ""}{change.toFixed(1)}%
+                </small>
+              )}
+            </button>
+          );
+        })}
+      </nav>
+      <nav id="timeframes" aria-label="Timeframes">
+        {TIMEFRAMES.map((tf) => (
+          <button
+            key={tf}
+            className={tf === timeframe ? "active" : ""}
+            disabled={tf === "1s" && NO_SECONDS.includes(symbol)}
+            onClick={() => navigate(`/${symbol}/${tf}`)}
+          >
+            {tf}
+          </button>
+        ))}
+      </nav>
+      <select
+        className="mini-btn"
+        aria-label="Chart style"
+        value={chartStyle}
+        onChange={(event) => setChartStyle(event.target.value as ChartStyle)}
+      >
+        {CHART_STYLES.map((style) => (
+          <option key={style} value={style}>{STYLE_LABELS[style]}</option>
+        ))}
+      </select>
+      <Link className="mini-btn" to="/docs" title="Documentation">docs</Link>
+      <span className={`status ${connection === "live" ? "live" : ""}`}>
+        {STATUS_LABELS[connection]}
+      </span>
+    </header>
+  );
+}

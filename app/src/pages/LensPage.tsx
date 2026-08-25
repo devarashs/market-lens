@@ -1,0 +1,98 @@
+/* The main view. The URL is the source of truth for symbol + timeframe:
+   pills, keyboard shortcuts, and back/forward all navigate; an effect
+   applies the route to the store (normalizing illegal pairs like /HYPE/1s
+   back to /HYPE/1m with a replace). */
+
+import { useEffect } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+
+import { ChartFooter } from "../components/ChartFooter";
+import { Header } from "../components/Header";
+import { MetricsBar } from "../components/MetricsBar";
+import { Readout } from "../components/Readout";
+import { SignalsBar } from "../components/SignalsBar";
+import { TapePanel } from "../components/TapePanel";
+import { LensChart } from "../chart/LensChart";
+import {
+  SYMBOLS, TIMEFRAMES, type Symbol, type Timeframe,
+} from "../lib/config";
+import { useCandlePolling } from "../lib/useCandlePolling";
+import { legalTimeframe, useLensStore } from "../store/lens";
+
+function parseRoute(symbolParam?: string, timeframeParam?: string) {
+  const symbol = SYMBOLS.includes(symbolParam as Symbol)
+    ? (symbolParam as Symbol) : "BTC";
+  const timeframe = TIMEFRAMES.includes(timeframeParam as Timeframe)
+    ? (timeframeParam as Timeframe) : "1m";
+  return { symbol, timeframe: legalTimeframe(symbol, timeframe) };
+}
+
+export function LensPage() {
+  const { symbol: symbolParam, timeframe: timeframeParam } = useParams();
+  const navigate = useNavigate();
+  useCandlePolling();
+
+  // Route → store, and normalize the URL when it names an illegal or
+  // unknown pair (replace: no junk history entries).
+  useEffect(() => {
+    const { symbol, timeframe } = parseRoute(symbolParam, timeframeParam);
+    if (symbolParam !== symbol || timeframeParam !== timeframe) {
+      navigate(`/${symbol}/${timeframe}`, { replace: true });
+      return;
+    }
+    const store = useLensStore.getState();
+    store.selectSymbol(symbol);
+    store.setTimeframe(timeframe);
+    document.title = `${symbol} ${timeframe} — Market Lens`;
+  }, [symbolParam, timeframeParam, navigate]);
+
+  // Keyboard shortcuts: 1–6 symbols, [ ] timeframe, h/p layer toggles.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent): void {
+      if ((event.target as HTMLElement).tagName === "INPUT") return;
+      const state = useLensStore.getState();
+      const digit = parseInt(event.key, 10);
+      if (digit >= 1 && digit <= SYMBOLS.length) {
+        navigate(`/${SYMBOLS[digit - 1]}/${state.timeframe}`);
+        return;
+      }
+      const tfIndex = TIMEFRAMES.indexOf(state.timeframe);
+      if (event.key === "[" && tfIndex > 0) {
+        navigate(`/${state.symbol}/${TIMEFRAMES[tfIndex - 1]}`);
+      }
+      if (event.key === "]" && tfIndex < TIMEFRAMES.length - 1) {
+        navigate(`/${state.symbol}/${TIMEFRAMES[tfIndex + 1]}`);
+      }
+      if (event.key === "h") state.setLayer("heat", !state.layers.heat);
+      if (event.key === "p") state.setLayer("profile", !state.layers.profile);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [navigate]);
+
+  return (
+    <>
+      <Header />
+      <MetricsBar />
+      <Readout />
+      <SignalsBar />
+      <main className="layout">
+        <section className="chart-wrap">
+          <LensChart />
+          <ChartFooter />
+        </section>
+        <TapePanel />
+      </main>
+      <footer className="attribution muted">
+        Charting by{" "}
+        <a href="https://www.tradingview.com/lightweight-charts/"
+           target="_blank" rel="noopener noreferrer">
+          TradingView Lightweight Charts
+        </a>{" "}
+        (Apache-2.0). Data: Binance, Bybit, OKX &amp; Hyperliquid public
+        streams. Depth/heatmap = resting <em>claims</em>; profile/CVD/tape =
+        executed <em>facts</em>. Not financial advice.
+      </footer>
+    </>
+  );
+}
