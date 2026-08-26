@@ -54,10 +54,15 @@ from market_lens.liqmap import LiquidationEstimator
 from market_lens.store import LensStore
 from market_lens.venues import (
     binance_adapter,
+    binance_futures_trades_adapter,
     binance_liquidation_adapter,
     bybit_adapter,
+    bybit_futures_adapter,
+    coinbase_adapter,
     hyperliquid_adapter,
+    kraken_adapter,
     okx_adapter,
+    okx_futures_adapter,
 )
 
 HEAT_INTERVAL_SECONDS = 10
@@ -216,6 +221,30 @@ async def binance_depth_poll() -> None:
                             break
                     except Exception:  # noqa: BLE001 — try fallback, then skip round
                         continue
+                await asyncio.sleep(BINANCE_DEPTH_POLL_SECONDS / len(listed))
+
+
+async def binance_futures_depth_poll() -> None:
+    """Full-depth USDT-perp books from fapi — venue 'binance-fut'. Its own
+    weight budget (2400/min): limit=1000 costs 20, five symbols at a 5s
+    stagger ≈ 1200/min, comfortably inside."""
+    listed = [spec for spec in SYMBOLS.values() if spec.binance]
+    async with ClientSession() as session:
+        while True:
+            for spec in listed:
+                try:
+                    async with session.get(
+                        "https://fapi.binance.com/fapi/v1/depth",
+                        params={"symbol": spec.binance.upper(), "limit": 1000},
+                        timeout=10,
+                    ) as response:
+                        data = await response.json()
+                        STATE.on_book("binance-fut", spec.key, {
+                            "bids": [[float(p), float(q)] for p, q in data["bids"]],
+                            "asks": [[float(p), float(q)] for p, q in data["asks"]],
+                        })
+                except Exception:  # noqa: BLE001 — skip round, poll again
+                    pass
                 await asyncio.sleep(BINANCE_DEPTH_POLL_SECONDS / len(listed))
 
 
@@ -599,8 +628,13 @@ async def main_async() -> None:
                  hyperliquid_adapter(STATE.on_book, STATE.on_trade),
                  bybit_adapter(STATE.on_book, STATE.on_trade),
                  okx_adapter(STATE.on_book, STATE.on_trade),
+                 coinbase_adapter(STATE.on_book, STATE.on_trade),
+                 kraken_adapter(STATE.on_book, STATE.on_trade),
+                 bybit_futures_adapter(STATE.on_book, STATE.on_trade),
+                 okx_futures_adapter(STATE.on_book, STATE.on_trade),
+                 binance_futures_trades_adapter(STATE.on_trade),
                  binance_liquidation_adapter(STATE.on_liquidation),
-                 binance_depth_poll(), metrics_poll(),
+                 binance_depth_poll(), binance_futures_depth_poll(), metrics_poll(),
                  liquidation_estimator_poll(),
                  heat_ring_loop(), broadcast_depth_loop()):
         asyncio.create_task(task)

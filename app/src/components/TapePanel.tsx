@@ -45,17 +45,21 @@ function WallsTable() {
 export function TapePanel() {
   const trades = useLensStore((s) => s.trades);
   const liqs = useLensStore((s) => s.liqs);
+  const activeVenues = useLensStore((s) => s.activeVenues);
   const symbol = useLensStore((s) => s.symbol);
   const thresholdMult = useLensStore((s) => s.thresholdMult);
   const setThresholdMult = useLensStore((s) => s.setThresholdMult);
   const threshold = currentThreshold({ symbol, thresholdMult });
 
   // One column, both kinds (aggr.trade-style): trades and forced
-  // liquidations interleaved by time, same threshold gate.
+  // liquidations interleaved by time, same threshold and venue gates —
+  // liqs carry venue "binance-fut", now a real listed venue.
+  const venueOn = (venue: string) =>
+    activeVenues === null || activeVenues.includes(venue);
   const rows: TapeRow[] = [
-    ...trades.filter((trade) => trade.notional >= threshold)
+    ...trades.filter((trade) => trade.notional >= threshold && venueOn(trade.venue))
       .map((trade): TapeRow => ({ kind: "trade", ts: trade.ts, trade })),
-    ...liqs.filter((liq) => liq.notional >= threshold)
+    ...liqs.filter((liq) => liq.notional >= threshold && venueOn(liq.venue))
       .map((liq): TapeRow => ({ kind: "liq", ts: liq.ts, liq })),
   ].sort((a, b) => a.ts - b.ts).slice(-MAX_TAPE_ROWS).reverse();
 

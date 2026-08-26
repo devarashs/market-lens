@@ -246,16 +246,27 @@ book, and book-without-tape each get their own verdict phrasing.</p>`,
     id: "venues",
     title: "Venues & aggregation",
     body: `
-<p>Four venues stream in: <b>Binance</b> (spot: REST 1000-level book +
-aggTrade stream), <b>Bybit</b> (spot: 200-level delta book + trades),
-<b>OKX</b> (spot: 400-level delta book + trades), <b>Hyperliquid</b> (perps:
-full book snapshots + trades). Each adapter is failure-isolated — one venue
-dying or reconnecting never affects the others.</p>
-<p>Footer checkboxes include/exclude venues from <i>your</i> aggregation
-live (server-side, per client). Books are binned per symbol and summed in
-USD notional. Candidate next venues (adapter pattern makes each ~an hour):
-Coinbase, Kraken, dYdX v4 — see <code>docs/venue-feeds.md</code> in the
-repo for the full survey.</p>`,
+<p>Nine venue books stream in — five spot: <b>Binance</b> (REST
+1000-level book + aggTrade), <b>Bybit</b> (200-level delta), <b>OKX</b>
+(400-level delta), <b>Coinbase</b> (full level2), <b>Kraken</b> (500-level)
+— and four perp: <b>Hyperliquid</b>, <b>binance-fut</b> (fapi 1000-level
+REST + aggTrade), <b>bybit-fut</b> and <b>okx-fut</b> (same protocols as
+their spot siblings on the linear/swap endpoints). Perps are where the
+leveraged flow lives — their tapes typically dominate — and each is its
+own venue in the filter, so spot and perp books can be compared directly.
+Each adapter is failure-isolated. Coinbase and Kraken are USD-quoted
+(their real liquidity); they join the USDT-quoted aggregate with the ~2bp
+peg smear every cross-venue aggregator accepts. BNB trades on neither
+(Binance's own token); HYPE remains HL-only.</p>
+<p>Footer checkboxes include/exclude venues from <i>your</i> view — the
+filter reaches everything venue-tagged: the aggregated book, walls and
+attribution (server-side per client), plus the tape list, chart trade
+dashes, and trade sounds (client-side). What stays all-venue for now:
+volume profile, CVD, pressure and the heatmap (aggregated at ingest;
+per-venue accumulators are a roadmap item). Liquidation prints carry venue
+binance-fut and filter with it. Books are binned per
+symbol and summed in USD notional. Still on the candidate list: dYdX v4 —
+see <code>docs/venue-feeds.md</code>.</p>`,
   },
   {
     id: "recording",

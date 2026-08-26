@@ -178,9 +178,12 @@ export const useLensStore = create<LensState>()(
           const trades = [...state.trades, message];
           if (trades.length > MAX_TRADES) trades.shift();
           set({ trades });
-          // Same gate as the tape list: you hear what you would see.
+          // Same gates as the tape list: you hear what you would see —
+          // threshold AND the venue filter.
           const threshold = currentThreshold(state);
-          if (state.beepEnabled && message.notional >= threshold) {
+          const venueOn = state.activeVenues === null
+            || state.activeVenues.includes(message.venue);
+          if (state.beepEnabled && venueOn && message.notional >= threshold) {
             playSound(soundParams(message.side, message.notional / threshold));
           }
           break;

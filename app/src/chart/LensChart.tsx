@@ -228,7 +228,9 @@ export function LensChart() {
       if (state.layers.profile && state.depth) drawProfile(env, state.depth);
       if (state.layers.depth && state.depth) drawDepth(env, state.depth);
       if (state.layers.trades) {
-        drawBubbles(env, state.trades, currentThreshold(state), state.timeframe);
+        const visible = state.activeVenues === null ? state.trades
+          : state.trades.filter((t) => state.activeVenues!.includes(t.venue));
+        drawBubbles(env, visible, currentThreshold(state), state.timeframe);
       }
       if (state.layers.liqs && state.liqs.length) {
         drawLiqPrints(env, state.liqs, state.timeframe);
@@ -326,6 +328,7 @@ export function LensChart() {
       store.subscribe((s) => s.layers, markDirty),
       store.subscribe((s) => s.thresholdMult, markDirty),
       store.subscribe((s) => s.timeframe, markDirty),
+      store.subscribe((s) => s.activeVenues, markDirty),
     ];
 
     cvdSeries.applyOptions({ visible: store.getState().layers.cvd });

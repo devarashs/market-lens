@@ -37,7 +37,17 @@ nothing Done unverified).
       map from OI-delta × leverage-tier projection (assumptions stated in
       market_lens/liqmap.py), bands consumed on price cross, 24h decay.
       Feeds the arena's liquidation-cascade backlog thesis.
-- [ ] Coinbase, Kraken, dYdX v4 adapters (reference: docs/venue-feeds.md)
+- [x] **Coinbase + Kraken adapters** (2026-08-26): six venues in the
+      aggregate; USD-quoted books join with the ~2bp peg smear, BNB/HYPE
+      excluded where unlisted. Venue filter extended to the whole trade
+      surface (tape, dashes, sounds) client-side. *Verified live: all six
+      in depth.venues, six-venue wall attribution, Coinbase trades
+      printing.* Same session, Arash's follow-up: **perp books added** —
+      binance-fut (fapi REST + aggTrade), bybit-fut, okx-fut as distinct
+      venues; nine books total, perp tapes dominate as expected.
+      Remaining candidate: dYdX v4
+- [ ] Per-venue accumulators so the venue filter can reach profile / CVD /
+      pressure / heatmap too (today those aggregate at ingest)
 - [ ] Symbol add/remove from the UI (config-only today)
 - [ ] Price alerts (browser notifications on level cross)
 

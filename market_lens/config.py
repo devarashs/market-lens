@@ -34,21 +34,30 @@ class SymbolSpec:
     big_trade_usd: float     # tape/marker threshold (notional USD)
     bybit: str | None = None     # Bybit spot symbol
     okx: str | None = None       # OKX spot instId
+    # USD-quoted venues (no USDT books worth using): joins the aggregate
+    # with the ~2bp USDT-peg smear every cross-venue aggregator accepts.
+    coinbase: str | None = None  # Coinbase product_id
+    kraken: str | None = None    # Kraken WS v2 symbol
 
 
 SYMBOLS: dict[str, SymbolSpec] = {
     spec.key: spec
     for spec in (
         SymbolSpec("BTC", "btcusdt", "BTC", price_bin=10.0, big_trade_usd=100_000,
-                   bybit="BTCUSDT", okx="BTC-USDT"),
+                   bybit="BTCUSDT", okx="BTC-USDT",
+                   coinbase="BTC-USD", kraken="BTC/USD"),
         SymbolSpec("ETH", "ethusdt", "ETH", price_bin=1.0, big_trade_usd=50_000,
-                   bybit="ETHUSDT", okx="ETH-USDT"),
+                   bybit="ETHUSDT", okx="ETH-USDT",
+                   coinbase="ETH-USD", kraken="ETH/USD"),
         SymbolSpec("SOL", "solusdt", "SOL", price_bin=0.05, big_trade_usd=25_000,
-                   bybit="SOLUSDT", okx="SOL-USDT"),
+                   bybit="SOLUSDT", okx="SOL-USDT",
+                   coinbase="SOL-USD", kraken="SOL/USD"),
+        # BNB trades on neither Coinbase nor Kraken (Binance's own token).
         SymbolSpec("BNB", "bnbusdt", "BNB", price_bin=0.2, big_trade_usd=25_000,
                    bybit="BNBUSDT", okx="BNB-USDT"),
         SymbolSpec("DOGE", "dogeusdt", "DOGE", price_bin=0.0005, big_trade_usd=25_000,
-                   bybit="DOGEUSDT", okx="DOGE-USDT"),
+                   bybit="DOGEUSDT", okx="DOGE-USDT",
+                   coinbase="DOGE-USD", kraken="DOGE/USD"),
         SymbolSpec("HYPE", None, "HYPE", price_bin=0.01, big_trade_usd=10_000),
     )
 }
@@ -60,3 +69,5 @@ HYPERLIQUID_WS = "wss://api.hyperliquid.xyz/ws"
 HYPERLIQUID_REST = "https://api.hyperliquid.xyz"
 BYBIT_WS = "wss://stream.bybit.com/v5/public/spot"
 OKX_WS = "wss://ws.okx.com:8443/ws/v5/public"
+COINBASE_WS = "wss://ws-feed.exchange.coinbase.com"
+KRAKEN_WS = "wss://ws.kraken.com/v2"

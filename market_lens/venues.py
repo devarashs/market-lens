@@ -20,7 +20,15 @@ import time
 
 import websockets
 
-from market_lens.config import BINANCE_WS, BYBIT_WS, HYPERLIQUID_WS, OKX_WS, SYMBOLS
+from market_lens.config import (
+    BINANCE_WS,
+    BYBIT_WS,
+    COINBASE_WS,
+    HYPERLIQUID_WS,
+    KRAKEN_WS,
+    OKX_WS,
+    SYMBOLS,
+)
 
 RECONNECT_SECONDS = 5
 BOOK_EMIT_LEVELS = 400  # top-N per side handed to the aggregator
@@ -206,6 +214,17 @@ async def hyperliquid_adapter(on_book, on_trade) -> None:
 
 async def bybit_adapter(on_book, on_trade) -> None:
     """Bybit spot v5: orderbook.200 (snapshot+delta) + publicTrade."""
+    await _bybit_engine(on_book, on_trade, BYBIT_WS, "bybit")
+
+
+async def bybit_futures_adapter(on_book, on_trade) -> None:
+    """Bybit USDT-perps: same v5 protocol on the linear endpoint — the
+    leveraged flow beside the spot book, as its own venue."""
+    await _bybit_engine(on_book, on_trade,
+                        "wss://stream.bybit.com/v5/public/linear", "bybit-fut")
+
+
+async def _bybit_engine(on_book, on_trade, url: str, venue: str) -> None:
     symbol_to_key = {spec.bybit: spec.key
                      for spec in SYMBOLS.values() if spec.bybit}
     args = ([f"orderbook.200.{s}" for s in symbol_to_key]
@@ -214,10 +233,10 @@ async def bybit_adapter(on_book, on_trade) -> None:
 
     while True:
         try:
-            async with websockets.connect(BYBIT_WS, ping_interval=None,
+            async with websockets.connect(url, ping_interval=None,
                                           max_size=2**22) as ws:
                 await ws.send(json.dumps({"op": "subscribe", "args": args}))
-                _log("bybit: connected + subscribed")
+                _log(f"{venue}: connected + subscribed")
 
                 async def keepalive() -> None:
                     while True:
@@ -240,14 +259,14 @@ async def bybit_adapter(on_book, on_trade) -> None:
                                 book.snapshot(data.get("b", []), data.get("a", []))
                             else:
                                 book.delta(data.get("b", []), data.get("a", []))
-                            on_book("bybit", key, book.emit())
+                            on_book(venue, key, book.emit())
                         elif topic.startswith("publicTrade.") and isinstance(data, list):
                             key = symbol_to_key.get(topic.rsplit(".", 1)[-1])
                             if key is None:
                                 continue
                             for trade in data:
                                 price, size = float(trade["p"]), float(trade["v"])
-                                on_trade("bybit", key, {
+                                on_trade(venue, key, {
                                     "price": price, "size": size,
                                     "side": "buy" if trade.get("S") == "Buy" else "sell",
                                     "notional": price * size,
@@ -256,13 +275,26 @@ async def bybit_adapter(on_book, on_trade) -> None:
                 finally:
                     ping_task.cancel()
         except Exception as error:  # noqa: BLE001 — isolation contract
-            _log(f"bybit: {error.__class__.__name__}: {error} — reconnecting in {RECONNECT_SECONDS}s")
+            _log(f"{venue}: {error.__class__.__name__}: {error} — reconnecting in {RECONNECT_SECONDS}s")
             await asyncio.sleep(RECONNECT_SECONDS)
 
 
 async def okx_adapter(on_book, on_trade) -> None:
     """OKX spot v5: books channel (400 levels, snapshot+update) + trades."""
-    inst_to_key = {spec.okx: spec.key for spec in SYMBOLS.values() if spec.okx}
+    await _okx_engine(on_book, on_trade,
+                      {spec.okx: spec.key for spec in SYMBOLS.values() if spec.okx},
+                      "okx")
+
+
+async def okx_futures_adapter(on_book, on_trade) -> None:
+    """OKX USDT perpetual swaps: same channels, -SWAP instIds, own venue."""
+    await _okx_engine(on_book, on_trade,
+                      {f"{spec.okx}-SWAP": spec.key
+                       for spec in SYMBOLS.values() if spec.okx},
+                      "okx-fut")
+
+
+async def _okx_engine(on_book, on_trade, inst_to_key: dict, venue: str) -> None:
     args = ([{"channel": "books", "instId": inst} for inst in inst_to_key]
             + [{"channel": "trades", "instId": inst} for inst in inst_to_key])
     books: dict[str, DeltaBook] = {inst: DeltaBook() for inst in inst_to_key}
@@ -272,7 +304,7 @@ async def okx_adapter(on_book, on_trade) -> None:
             async with websockets.connect(OKX_WS, ping_interval=None,
                                           max_size=2**22) as ws:
                 await ws.send(json.dumps({"op": "subscribe", "args": args}))
-                _log("okx: connected + subscribed")
+                _log(f"{venue}: connected + subscribed")
 
                 async def keepalive() -> None:
                     while True:
@@ -301,11 +333,11 @@ async def okx_adapter(on_book, on_trade) -> None:
                                 book.snapshot(bids, asks)
                             else:
                                 book.delta(bids, asks)
-                            on_book("okx", key, book.emit())
+                            on_book(venue, key, book.emit())
                         elif channel == "trades":
                             for trade in data:
                                 price, size = float(trade["px"]), float(trade["sz"])
-                                on_trade("okx", key, {
+                                on_trade(venue, key, {
                                     "price": price, "size": size,
                                     "side": "buy" if trade.get("side") == "buy" else "sell",
                                     "notional": price * size,
@@ -314,5 +346,143 @@ async def okx_adapter(on_book, on_trade) -> None:
                 finally:
                     ping_task.cancel()
         except Exception as error:  # noqa: BLE001 — isolation contract
-            _log(f"okx: {error.__class__.__name__}: {error} — reconnecting in {RECONNECT_SECONDS}s")
+            _log(f"{venue}: {error.__class__.__name__}: {error} — reconnecting in {RECONNECT_SECONDS}s")
+            await asyncio.sleep(RECONNECT_SECONDS)
+
+
+async def binance_futures_trades_adapter(on_trade) -> None:
+    """Binance USDT-perp aggTrade stream — the perp tape as venue
+    'binance-fut' (its book comes from the fapi REST poll in server.py,
+    mirroring the spot arrangement; its liquidations were already here)."""
+    stream_to_key = {spec.binance: spec.key
+                     for spec in SYMBOLS.values() if spec.binance}
+    streams = [f"{name}@aggTrade" for name in stream_to_key]
+    url = f"wss://fstream.binance.com/stream?streams={'/'.join(streams)}"
+
+    while True:
+        try:
+            async with websockets.connect(url, ping_interval=20, max_size=2**22) as ws:
+                _log("binance-fut: trade stream connected")
+                async for raw in ws:
+                    message = json.loads(raw)
+                    data = message.get("data", {})
+                    key = stream_to_key.get(message.get("stream", "").split("@")[0])
+                    if key is None:
+                        continue
+                    price, size = float(data["p"]), float(data["q"])
+                    on_trade("binance-fut", key, {
+                        "price": price, "size": size,
+                        "side": "sell" if data.get("m") else "buy",
+                        "notional": price * size,
+                        "ts": int(data.get("T", time.time() * 1000)),
+                    })
+        except Exception as error:  # noqa: BLE001 — isolation contract
+            _log(f"binance-fut trades: {error.__class__.__name__}: {error} — reconnecting in {RECONNECT_SECONDS}s")
+            await asyncio.sleep(RECONNECT_SECONDS)
+
+
+async def coinbase_adapter(on_book, on_trade) -> None:
+    """Coinbase Exchange feed: level2_batch (full snapshot + batched deltas,
+    public) + matches. USD-quoted — see the config note on the peg smear.
+    `match.side` is the MAKER's side, so the aggressor is its opposite."""
+    product_to_key = {spec.coinbase: spec.key
+                      for spec in SYMBOLS.values() if spec.coinbase}
+    books: dict[str, DeltaBook] = {p: DeltaBook() for p in product_to_key}
+
+    while True:
+        try:
+            async with websockets.connect(COINBASE_WS, ping_interval=20,
+                                          max_size=2**23) as ws:
+                await ws.send(json.dumps({
+                    "type": "subscribe",
+                    "product_ids": list(product_to_key),
+                    "channels": ["level2_batch", "matches"],
+                }))
+                _log("coinbase: connected + subscribed")
+                async for raw in ws:
+                    message = json.loads(raw)
+                    kind = message.get("type")
+                    product = message.get("product_id")
+                    key = product_to_key.get(product)
+                    if kind == "error":
+                        raise RuntimeError(message.get("reason") or message.get("message"))
+                    if key is None:
+                        continue
+                    if kind == "snapshot":
+                        books[product].snapshot(message.get("bids", []),
+                                                message.get("asks", []))
+                        on_book("coinbase", key, books[product].emit())
+                    elif kind == "l2update":
+                        bids = [[p, s] for side, p, s in message.get("changes", [])
+                                if side == "buy"]
+                        asks = [[p, s] for side, p, s in message.get("changes", [])
+                                if side == "sell"]
+                        books[product].delta(bids, asks)
+                        on_book("coinbase", key, books[product].emit())
+                    elif kind == "match":
+                        price = float(message["price"])
+                        size = float(message["size"])
+                        on_trade("coinbase", key, {
+                            "price": price, "size": size,
+                            "side": "buy" if message.get("side") == "sell" else "sell",
+                            "notional": price * size,
+                            "ts": int(time.time() * 1000),
+                        })
+        except Exception as error:  # noqa: BLE001 — isolation contract
+            _log(f"coinbase: {error.__class__.__name__}: {error} — reconnecting in {RECONNECT_SECONDS}s")
+            await asyncio.sleep(RECONNECT_SECONDS)
+
+
+async def kraken_adapter(on_book, on_trade) -> None:
+    """Kraken WS v2: book (500 levels, snapshot+update) + trade. USD-quoted."""
+    symbol_to_key = {spec.kraken: spec.key
+                     for spec in SYMBOLS.values() if spec.kraken}
+    books: dict[str, DeltaBook] = {s: DeltaBook() for s in symbol_to_key}
+
+    def rows(entries: list) -> list:
+        return [[e["price"], e["qty"]] for e in entries]
+
+    while True:
+        try:
+            async with websockets.connect(KRAKEN_WS, ping_interval=20,
+                                          max_size=2**23) as ws:
+                for channel, extra in (("book", {"depth": 500}), ("trade", {})):
+                    await ws.send(json.dumps({
+                        "method": "subscribe",
+                        "params": {"channel": channel,
+                                   "symbol": list(symbol_to_key), **extra},
+                    }))
+                _log("kraken: connected + subscribed")
+                async for raw in ws:
+                    message = json.loads(raw)
+                    channel = message.get("channel")
+                    if channel == "book":
+                        for entry in message.get("data", []):
+                            symbol = entry.get("symbol")
+                            key = symbol_to_key.get(symbol)
+                            if key is None:
+                                continue
+                            book = books[symbol]
+                            if message.get("type") == "snapshot":
+                                book.snapshot(rows(entry.get("bids", [])),
+                                              rows(entry.get("asks", [])))
+                            else:
+                                book.delta(rows(entry.get("bids", [])),
+                                           rows(entry.get("asks", [])))
+                            on_book("kraken", key, book.emit())
+                    elif channel == "trade":
+                        for trade in message.get("data", []):
+                            key = symbol_to_key.get(trade.get("symbol"))
+                            if key is None:
+                                continue
+                            price = float(trade["price"])
+                            size = float(trade["qty"])
+                            on_trade("kraken", key, {
+                                "price": price, "size": size,
+                                "side": "buy" if trade.get("side") == "buy" else "sell",
+                                "notional": price * size,
+                                "ts": int(time.time() * 1000),
+                            })
+        except Exception as error:  # noqa: BLE001 — isolation contract
+            _log(f"kraken: {error.__class__.__name__}: {error} — reconnecting in {RECONNECT_SECONDS}s")
             await asyncio.sleep(RECONNECT_SECONDS)
