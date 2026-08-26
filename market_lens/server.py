@@ -78,6 +78,7 @@ from market_lens.venues import (
     kraken_adapter,
     okx_adapter,
     okx_futures_adapter,
+    okx_liquidation_adapter,
 )
 
 HEAT_INTERVAL_SECONDS = 10
@@ -1278,6 +1279,7 @@ async def main_async() -> None:
                  okx_futures_adapter(STATE.on_book, STATE.on_trade),
                  binance_futures_trades_adapter(STATE.on_trade),
                  binance_liquidation_adapter(STATE.on_liquidation),
+                 okx_liquidation_adapter(STATE.on_liquidation),
                  binance_depth_poll(), binance_futures_depth_poll(), metrics_poll(),
                  liquidation_estimator_poll(),
                  flow_archive_loop(), retention_loop(), backfill_cvd(),

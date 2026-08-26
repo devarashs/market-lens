@@ -136,6 +136,98 @@ async def binance_adapter(on_book, on_trade) -> None:
             await asyncio.sleep(RECONNECT_SECONDS)
 
 
+def parse_okx_liquidations(message: dict, inst_to_key: dict[str, str],
+                           multipliers: dict[str, float]) -> list[tuple[str, dict]]:
+    """OKX `liquidation-orders` frames -> [(symbol_key, liq)].
+
+    `posSide` is who DIED — a "long" entry means a long position was
+    force-closed — which matches the side convention the rest of the
+    liquidation layer uses. `sz` counts CONTRACTS, so it carries the same
+    multiplier trap that had okx-fut trades 100x too large; the ctVal map
+    is applied here for the same reason.
+    """
+    out: list[tuple[str, dict]] = []
+    for entry in message.get("data") or []:
+        inst = entry.get("instId")
+        key = inst_to_key.get(inst)
+        if key is None:
+            continue
+        multiplier = multipliers.get(inst, 1.0)
+        for detail in entry.get("details") or []:
+            try:
+                price = float(detail.get("bkPx") or 0)
+                size = float(detail.get("sz") or 0) * multiplier
+            except (TypeError, ValueError):
+                continue
+            if price <= 0 or size <= 0:
+                continue
+            side = detail.get("posSide")
+            if side not in ("long", "short"):
+                continue
+            out.append((key, {
+                "ts": int(detail.get("ts") or time.time() * 1000),
+                "side": side,
+                "price": price,
+                "size": size,
+                "notional": price * size,
+            }))
+    return out
+
+
+async def okx_liquidation_adapter(on_liquidation) -> None:
+    """OKX swap forced liquidations.
+
+    Binance's `forceOrder` stream is the one everybody cites, and ours has
+    delivered NOTHING: four minutes on the all-market feed, socket open,
+    zero frames, and zero rows archived in a day of trading (checked
+    2026-08-27). OKX publishes the same event and is demonstrably alive,
+    so the liquidation layer is fed from here. The Binance adapter stays
+    connected in case it returns.
+    """
+    inst_to_key = {f"{spec.okx}-SWAP": spec.key
+                   for spec in SYMBOLS.values() if spec.okx}
+    while True:
+        try:
+            multipliers = await _okx_contract_values(list(inst_to_key))
+        except Exception as error:  # noqa: BLE001 — no data beats wrong sizes
+            _log(f"okx-liq: contract values unavailable "
+                 f"({error.__class__.__name__}) — retrying in {RECONNECT_SECONDS}s")
+            await asyncio.sleep(RECONNECT_SECONDS)
+            continue
+        break
+
+    while True:
+        try:
+            async with websockets.connect(OKX_WS, ping_interval=None,
+                                          max_size=2**22) as ws:
+                await ws.send(fastjson.dumps_str({
+                    "op": "subscribe",
+                    "args": [{"channel": "liquidation-orders", "instType": "SWAP"}],
+                }))
+                _log("okx-fut: liquidation stream connected")
+
+                async def keepalive() -> None:
+                    while True:
+                        await asyncio.sleep(25)
+                        await ws.send("ping")
+
+                ping_task = asyncio.create_task(keepalive())
+                try:
+                    async for raw in ws:
+                        if raw == "pong":
+                            continue
+                        message = fastjson.loads(raw)
+                        for key, liq in parse_okx_liquidations(
+                                message, inst_to_key, multipliers):
+                            on_liquidation("okx-fut", key, liq)
+                finally:
+                    ping_task.cancel()
+        except Exception as error:  # noqa: BLE001 — isolation contract
+            _log(f"okx-liq: {error.__class__.__name__}: {error} — "
+                 f"reconnecting in {RECONNECT_SECONDS}s")
+            await asyncio.sleep(RECONNECT_SECONDS)
+
+
 async def binance_liquidation_adapter(on_liquidation) -> None:
     """Binance USDT-perp forced liquidations (<symbol>@forceOrder).
 
