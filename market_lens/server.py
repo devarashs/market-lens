@@ -411,20 +411,32 @@ async def broadcast_depth_loop() -> None:
             profile = aggregate_books(books, effective_bin, DEPTH_BINS_PER_SIDE)
             accumulator = STATE.accumulators[symbol]
 
-            # Per-venue attribution for the wall rows ("who is quoting it"),
-            # and per-venue best bid/ask for the divergence gauge.
-            venue_bins = {
-                venue: aggregate_books([book], effective_bin, DEPTH_BINS_PER_SIDE)
-                for venue, book in venue_books
-            }
+            # Per-venue attribution for the wall rows ("who is quoting
+            # it"). Only the 4+4 wall bins matter, so each venue book gets
+            # ONE binning pass into those bins — replacing nine full
+            # aggregate_books calls per tick, which py-spy showed as the
+            # residual load on the 1-vCPU VPS (2026-08-26).
             walls = top_walls(profile)
+            wall_bin_sets = {side: {price for price, _ in walls[side]}
+                             for side in ("bids", "asks")}
+            venue_wall_usd: dict[str, dict[str, dict[float, float]]] = {
+                side: {} for side in ("bids", "asks")}
+            for venue, book in venue_books:
+                for side in ("bids", "asks"):
+                    targets = wall_bin_sets[side]
+                    if not targets:
+                        continue
+                    sums = venue_wall_usd[side].setdefault(venue, {})
+                    for level_price, size in book[side]:
+                        level_bin = bin_price(level_price, effective_bin)
+                        if level_bin in targets:
+                            sums[level_bin] = sums.get(level_bin, 0.0)                                 + level_price * size
             attributed_walls = {
                 side: [
                     [price, usd, {
-                        venue: usd_at
-                        for venue, bins in venue_bins.items()
-                        for level_price, usd_at in bins[side]
-                        if level_price == price
+                        venue: round(sums[price], 2)
+                        for venue, sums in venue_wall_usd[side].items()
+                        if price in sums
                     }]
                     for price, usd in walls[side]
                 ]
