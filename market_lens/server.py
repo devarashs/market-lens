@@ -180,6 +180,22 @@ class SymbolAccumulators:
         weighted = sum(price * (buy + sell) for price, (buy, sell) in bins.items())
         return weighted / total
 
+    def taker_delta(self, window_seconds: float, now: float | None = None,
+                    venues: list[str] | None = None) -> float:
+        """Net aggressive notional (buys − sells) over the trailing window.
+
+        Lives here rather than inline in the OI poll so the pressure
+        deque has exactly one place that knows its shape — adding the
+        venue field silently broke a positional unpack in that poll, and
+        every backfill and estimator tick died on it until the deploy log
+        was read (2026-08-26).
+        """
+        cutoff = (now if now is not None else time.time()) - window_seconds
+        return sum(
+            (notional if side == "buy" else -notional)
+            for ts, venue, side, notional in self.pressure
+            if ts >= cutoff and (venues is None or venue in venues))
+
     def pending_cvd_minutes(self, venues: list[str] | None) -> dict[int, float]:
         """Delta per minute still in the write buffer — the minutes the
         archive has not seen yet, which a filtered series must add back."""
@@ -453,9 +469,7 @@ async def liquidation_estimator_poll() -> None:
                     if oi_usd <= 0:
                         continue
                 now = time.time()
-                taker_delta = sum(
-                    (n if side == "buy" else -n)
-                    for ts, side, n in accumulator.pressure if ts >= now - LIQ_POLL_SECONDS)
+                taker_delta = accumulator.taker_delta(LIQ_POLL_SECONDS, now)
                 ts_ms = int(now * 1000)
                 # Archive BEFORE observing: these four numbers are the
                 # estimator's entire input, and keeping them is what lets

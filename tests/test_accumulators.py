@@ -142,6 +142,26 @@ def test_filtering_to_an_unknown_venue_yields_nothing():
     assert acc.vwap(["nope"]) is None
 
 
+def test_taker_delta_nets_buys_against_sells_in_the_window():
+    """The OI poll's side-attribution input. It had this logic inline and
+    unpacked the pressure tuple positionally, which broke silently when
+    the venue field was added — hence a tested method."""
+    import time as clock
+    acc = populated()
+    now = clock.time()
+    assert acc.taker_delta(300, now) == 4_000.0        # 11k buy - 7k sell
+    assert acc.taker_delta(300, now, ["binance"]) == 6_000.0
+    assert acc.taker_delta(300, now, ["kraken"]) == -3_000.0
+
+
+def test_taker_delta_excludes_prints_outside_the_window():
+    import time as clock
+    acc = populated()
+    # Every print above was stamped "now"; a window ending before them
+    # sees nothing.
+    assert acc.taker_delta(300, clock.time() + 600) == 0.0
+
+
 def test_pending_cvd_minutes_respects_the_filter():
     """The write buffer tops up a filtered series for minutes the archive
     has not seen yet."""
