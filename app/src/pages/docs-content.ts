@@ -151,6 +151,34 @@ walls usually cluster near the touch — that is real; the biggest resting
 size almost always sits close to price.</p>`,
   },
   {
+    id: "liquidations",
+    title: "Liquidations: real prints & the estimated map",
+    body: `
+<p>Two layers, honestly separated. <b>Liq prints (facts)</b>: every real
+forced liquidation from Binance's public <code>forceOrder</code> stream
+draws as a violet <b>×</b> at its fill price — magenta when a <i>long</i>
+died, blue-violet when a <i>short</i> did; monsters (≥$250K) get a label,
+and the footer shows rolling 1h totals. Every print is archived to
+<code>lens.db</code> — this history has no free source and cannot be
+backfilled, so the archive is the moat. (HL-only symbols like HYPE have no
+Binance stream and show none.)</p>
+<p><b>Liq map (estimate)</b>: faint full-width violet bands marking where
+current leveraged positions <i>would</i> die. Method, assumptions in the
+open: when open interest rises while price trades at P, new inventory of
+that notional was opened near P; long/short attribution follows the taker
+flow; liquidation levels project at the standard tiers (5×/10×/25×/50×/
+100× with an assumed mix — no venue publishes the real distribution);
+bands are <i>consumed</i> when price trades through them and decay with a
+24h half-life. Nobody can see actual positions — every liquidation
+heatmap anywhere is this same estimate wearing different clothes.</p>
+<p>Why it matters: liquidation clusters are <b>fuel on the track</b> —
+forced orders are price-insensitive flow, so price reaching a dense band
+tends to accelerate through it (the cascade), and it is a documented
+market habit that price gets drawn toward dense pools. Whether that is
+deliberate hunting or emergent physics, the map shows where the fuel
+sits, and the real prints grade the estimate over time.</p>`,
+  },
+  {
     id: "gauges",
     title: "Gauges: imbalance, pressure, spread",
     body: `

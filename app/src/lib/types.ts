@@ -66,6 +66,19 @@ export interface SymbolMetrics {
 
 export type MetricsMap = Record<string, SymbolMetrics>;
 
+/** A real forced liquidation; side = who DIED. */
+export interface LiqEvent {
+  ts: number; // epoch ms
+  venue: string;
+  side: "long" | "short";
+  price: number;
+  size: number;
+  notional: number;
+}
+
+/** [price_bin, longUsd, shortUsd] — estimated liquidation density. */
+export type LiqBand = [number, number, number];
+
 export type ServerMessage =
   | DepthMessage
   | ({ type: "trade"; symbol: string } & Trade)
@@ -73,6 +86,9 @@ export type ServerMessage =
   | { type: "heat"; symbol: string; cols: HeatCol[] }
   | { type: "heatcol"; symbol: string; col: HeatCol }
   | { type: "cvd"; symbol: string; points: [number, number][] }
+  | ({ type: "liq"; symbol: string } & LiqEvent)
+  | { type: "liqHistory"; symbol: string; events: LiqEvent[] }
+  | { type: "liqmap"; symbol: string; bands: LiqBand[] }
   | { type: "metrics"; data: MetricsMap };
 
 export type ConnectionStatus = "connecting" | "live" | "reconnecting" | "stale";

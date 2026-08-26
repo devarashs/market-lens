@@ -6,6 +6,7 @@ import { useLensStore, type LayerFlags } from "../store/lens";
 const LAYER_TOGGLES: [keyof LayerFlags, string][] = [
   ["candles", "candles"], ["trades", "trades"], ["walls", "order lines"],
   ["heat", "heatmap"], ["profile", "profile"], ["depth", "depth"],
+  ["liqs", "liqs"], ["liqmap", "liq map"],
   ["cvd", "CVD"], ["vwap", "VWAP"], ["levels", "day levels"],
 ];
 
@@ -51,6 +52,26 @@ function Gauges() {
   );
 }
 
+function LiqGauge() {
+  const liqs = useLensStore((s) => s.liqs);
+  const cutoff = Date.now() - 3_600_000;
+  let longs = 0, shorts = 0;
+  for (const liq of liqs) {
+    if (liq.ts >= cutoff) {
+      if (liq.side === "long") longs += liq.notional;
+      else shorts += liq.notional;
+    }
+  }
+  if (longs + shorts === 0) return null;
+  return (
+    <span className="gauge muted">
+      liqs 1h: <b className="sell-c">${formatUsd(longs)} longs</b>
+      {" / "}
+      <b className="buy-c">${formatUsd(shorts)} shorts</b>
+    </span>
+  );
+}
+
 function VenueToggles() {
   const venues = useLensStore((s) => s.depth?.venues) ?? [];
   const activeVenues = useLensStore((s) => s.activeVenues);
@@ -89,6 +110,7 @@ export function ChartFooter() {
     <div className="chart-footer">
       <div className="footer-row">
         <Gauges />
+        <LiqGauge />
         <VenueToggles />
         <label className="muted toggle">
           <input

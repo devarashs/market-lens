@@ -9,7 +9,7 @@
 
 import { COLORS, TF_SECONDS, type Timeframe } from "../lib/config";
 import { formatUsd } from "../lib/format";
-import type { DepthMessage, HeatCol, Trade } from "../lib/types";
+import type { DepthMessage, HeatCol, LiqBand, LiqEvent, Trade } from "../lib/types";
 
 export interface DrawEnv {
   under: CanvasRenderingContext2D;
@@ -116,6 +116,55 @@ export function drawDepth(env: DrawEnv, depth: DepthMessage): void {
     const width = Math.max(2, Math.sqrt(level.usd / maxUsd) * 175);
     env.under.fillStyle = `rgba(${level.rgb},0.45)`;
     env.under.fillRect(env.width - width, y - 1.5, width, 3);
+  }
+}
+
+/** ESTIMATED liquidation density as full-width violet bands (claims-of-
+    claims layer — see liqmap.py for the method and its assumptions).
+    Intensity scales with estimated notional; hue leans magenta where longs
+    would die (below price) and blue-violet where shorts would (above). */
+export function drawLiqMap(env: DrawEnv, bands: LiqBand[]): void {
+  const maxUsd = Math.max(...bands.map(([, l, s]) => l + s), 1);
+  for (const [price, longUsd, shortUsd] of bands) {
+    const y = env.priceToY(price);
+    if (y === null || y < 0 || y > env.height) continue;
+    const total = longUsd + shortUsd;
+    const alpha = Math.min(0.35, Math.sqrt(total / maxUsd) * 0.35);
+    const rgb = longUsd >= shortUsd ? COLORS.liqLongRgb : COLORS.liqShortRgb;
+    env.under.fillStyle = `rgba(${rgb},${alpha.toFixed(3)})`;
+    env.under.fillRect(0, y - 1.5, env.width, 3);
+  }
+}
+
+/** REAL forced liquidations as X marks at their fill price — the facts
+    the estimator answers to. Size grows with notional; monsters (≥$250K)
+    get a printed label. */
+export function drawLiqPrints(
+  env: DrawEnv, liqs: LiqEvent[], timeframe: Timeframe,
+): void {
+  const bucket = TF_SECONDS[timeframe];
+  for (const liq of liqs) {
+    const snapped = Math.floor(liq.ts / 1000 / bucket) * bucket;
+    const x = env.timeToX(snapped);
+    const y = env.priceToY(liq.price);
+    if (x === null || y === null || y < 0 || y > env.height) continue;
+    const arm = Math.min(8, 3 + Math.sqrt(liq.notional / 100_000) * 3);
+    const rgb = liq.side === "long" ? COLORS.liqLongRgb : COLORS.liqShortRgb;
+    env.over.strokeStyle = `rgba(${rgb},0.9)`;
+    env.over.lineWidth = 1.5;
+    env.over.beginPath();
+    env.over.moveTo(x - arm, y - arm);
+    env.over.lineTo(x + arm, y + arm);
+    env.over.moveTo(x - arm, y + arm);
+    env.over.lineTo(x + arm, y - arm);
+    env.over.stroke();
+    if (liq.notional >= 250_000) {
+      env.over.font = "10px sans-serif";
+      env.over.fillStyle = `rgba(${rgb},0.95)`;
+      env.over.fillText(
+        `${liq.side === "long" ? "▼" : "▲"}liq $${formatUsd(liq.notional)}`,
+        x + arm + 3, y + 3);
+    }
   }
 }
 

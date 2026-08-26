@@ -21,12 +21,16 @@ import type {
   ConnectionStatus,
   DepthMessage,
   HeatCol,
+  LiqBand,
+  LiqEvent,
   MetricsMap,
   ServerMessage,
   Trade,
 } from "../lib/types";
 
 export interface LayerFlags {
+  liqs: boolean;
+  liqmap: boolean;
   heat: boolean;
   profile: boolean;
   walls: boolean;
@@ -56,6 +60,8 @@ interface LensState {
   depth: DepthMessage | null;
   heat: HeatCol[];
   trades: Trade[];
+  liqs: LiqEvent[];
+  liqMap: LiqBand[];
   cvd: [number, number][];
   metrics: MetricsMap;
   candleRows: Candle[];
@@ -104,6 +110,7 @@ interface StoredPrefs {
 const DEFAULT_LAYERS: LayerFlags = {
   heat: true, profile: true, walls: true, trades: true, depth: true,
   candles: true, cvd: true, vwap: true, levels: true,
+  liqs: true, liqmap: true,
 };
 
 function loadPrefs(): Partial<StoredPrefs> {
@@ -143,6 +150,8 @@ export const useLensStore = create<LensState>()(
     depth: null,
     heat: [],
     trades: [],
+    liqs: [],
+    liqMap: [],
     cvd: [],
     metrics: {},
     candleRows: [],
@@ -189,6 +198,18 @@ export const useLensStore = create<LensState>()(
         case "cvd":
           set({ cvd: message.points });
           break;
+        case "liq": {
+          const liqs = [...get().liqs, message];
+          if (liqs.length > 500) liqs.shift();
+          set({ liqs });
+          break;
+        }
+        case "liqHistory":
+          set({ liqs: message.events ?? [] });
+          break;
+        case "liqmap":
+          set({ liqMap: message.bands ?? [] });
+          break;
       }
     },
 
@@ -199,8 +220,8 @@ export const useLensStore = create<LensState>()(
         timeframe: legalTimeframe(symbol, get().timeframe),
         // Everything below is the OLD symbol's data — a blank chart that
         // fills is honest; stale BTC walls on an ETH chart are not.
-        depth: null, heat: [], trades: [], cvd: [], readout: null,
-        activeVenues: null, candleRows: [],
+        depth: null, heat: [], trades: [], liqs: [], liqMap: [], cvd: [],
+        readout: null, activeVenues: null, candleRows: [],
       });
     },
 

@@ -49,6 +49,21 @@ CREATE TABLE IF NOT EXISTS depth_snapshots (
     notional_usd REAL    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_depth_symbol_ts ON depth_snapshots (symbol, ts);
+
+-- Real forced liquidations from venue streams (Binance futures forceOrder).
+-- `side` is the side that DIED: 'long' means a long was force-closed (the
+-- forced order itself sells). This history cannot be backfilled from
+-- anywhere — recording it is the point (arena backlog, 2026-08-24).
+CREATE TABLE IF NOT EXISTS liquidations (
+    ts           INTEGER NOT NULL,  -- exchange timestamp, epoch ms
+    symbol       TEXT    NOT NULL,
+    venue        TEXT    NOT NULL,
+    side         TEXT    NOT NULL CHECK (side IN ('long', 'short')),
+    price        REAL    NOT NULL,
+    size         REAL    NOT NULL,
+    notional_usd REAL    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_liq_symbol_ts ON liquidations (symbol, ts);
 """
 
 
@@ -106,7 +121,32 @@ class LensStore:
         )
         self.connection.commit()
 
+    def insert_liquidation(self, symbol: str, venue: str, liq: dict) -> None:
+        """Archive one forced liquidation. `liq`: ts (ms), side ('long' died
+        / 'short' died), price, size, notional."""
+        self.connection.execute(
+            "INSERT INTO liquidations (ts, symbol, venue, side, price, size,"
+            " notional_usd) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (liq["ts"], symbol, venue, liq["side"], liq["price"],
+             liq["size"], round(liq["notional"], 2)),
+        )
+        self.connection.commit()
+
     # -------------------------------------------------------------- reads
+
+    def recent_liquidations(self, symbol: str, limit: int) -> list[dict]:
+        """Last `limit` liquidations for a symbol, oldest first — chart
+        seeding, same shape the WS pushes live."""
+        rows = self.connection.execute(
+            "SELECT ts, venue, side, price, size, notional_usd FROM liquidations"
+            " WHERE symbol = ? ORDER BY ts DESC LIMIT ?",
+            (symbol, limit),
+        ).fetchall()
+        return [
+            {"ts": ts, "venue": venue, "side": side, "price": price,
+             "size": size, "notional": notional_usd}
+            for ts, venue, side, price, size, notional_usd in reversed(rows)
+        ]
 
     def recent_trades(self, symbol: str, limit: int) -> list[dict]:
         """Last `limit` archived trades for a symbol, oldest first —
@@ -135,7 +175,7 @@ class LensStore:
     def counts(self) -> dict[str, int]:
         return {
             table: self.connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            for table in ("trades", "depth_snapshots")
+            for table in ("trades", "depth_snapshots", "liquidations")
         }
 
     # ---------------------------------------------------------- retention
@@ -145,7 +185,7 @@ class LensStore:
         deleted counts per table. The retention hook — the *policy* (how
         long to keep) belongs to whoever schedules this, not the store."""
         deleted = {}
-        for table in ("trades", "depth_snapshots"):
+        for table in ("trades", "depth_snapshots", "liquidations"):
             cursor = self.connection.execute(
                 f"DELETE FROM {table} WHERE ts < ?", (cutoff_ms,))
             deleted[table] = cursor.rowcount

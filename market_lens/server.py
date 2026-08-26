@@ -44,9 +44,11 @@ from market_lens.config import (
     SYMBOLS,
     WEB_DIR,
 )
+from market_lens.liqmap import LiquidationEstimator
 from market_lens.store import LensStore
 from market_lens.venues import (
     binance_adapter,
+    binance_liquidation_adapter,
     bybit_adapter,
     hyperliquid_adapter,
     okx_adapter,
@@ -66,7 +68,11 @@ CVD_MAX_MINUTES = 24 * 60
 class SymbolAccumulators:
     """Everything derived from the full trade stream, per symbol."""
 
-    def __init__(self) -> None:
+    def __init__(self, price_bin: float) -> None:
+        self.last_price: float | None = None
+        # Estimated liquidation bands (see liqmap.py for the method and
+        # its stated assumptions); fed by the futures-OI poll below.
+        self.liq_estimator = LiquidationEstimator(price_bin)
         self.cvd_minutes: dict[int, float] = defaultdict(float)   # minute → Δnotional
         self.profile: dict[float, list[float]] = defaultdict(lambda: [0.0, 0.0])  # bin → [buy, sell]
         self.pressure: deque[tuple[float, str, float]] = deque()  # (ts, side, notional)
@@ -77,6 +83,7 @@ class SymbolAccumulators:
         self.recent_trades: deque[dict] = deque(maxlen=800)
 
     def on_trade(self, symbol: str, trade: dict) -> None:
+        self.last_price = trade["price"]
         minute = int(trade["ts"] / 60000) * 60
         signed = trade["notional"] if trade["side"] == "buy" else -trade["notional"]
         self.cvd_minutes[minute] += signed
@@ -122,7 +129,7 @@ class LensState:
         self.books: dict[tuple[str, str], dict] = {}      # (symbol, venue) → book
         self.clients: dict[web.WebSocketResponse, dict] = {}  # ws → {symbol, venues}
         self.accumulators: dict[str, SymbolAccumulators] = {
-            key: SymbolAccumulators() for key in SYMBOLS
+            key: SymbolAccumulators(spec.price_bin) for key, spec in SYMBOLS.items()
         }
         self.metrics: dict[str, dict] = {}
 
@@ -142,6 +149,16 @@ class LensState:
         if trade["notional"] >= threshold:
             STORE.insert_trade(symbol, venue, trade)
         message = json.dumps({"type": "trade", **payload})
+        for ws, sub in list(self.clients.items()):
+            if sub["symbol"] == symbol and not ws.closed:
+                asyncio.ensure_future(ws.send_str(message))
+
+    def on_liquidation(self, venue: str, symbol: str, liq: dict) -> None:
+        """A real forced liquidation: archive it (facts the estimator will
+        be judged against) and push it to subscribed clients."""
+        STORE.insert_liquidation(symbol, venue, liq)
+        message = json.dumps({"type": "liq", "symbol": symbol,
+                              "venue": venue, **liq})
         for ws, sub in list(self.clients.items()):
             if sub["symbol"] == symbol and not ws.closed:
                 asyncio.ensure_future(ws.send_str(message))
@@ -267,6 +284,46 @@ async def metrics_poll() -> None:
             except Exception as error:  # noqa: BLE001 — metrics are best-effort
                 print(f"metrics poll: {error.__class__.__name__}: {error}", flush=True)
             await asyncio.sleep(METRICS_POLL_SECONDS)
+
+
+LIQ_POLL_SECONDS = 30
+
+
+async def liquidation_estimator_poll() -> None:
+    """Feed each symbol's estimator a futures-OI observation every 30s;
+    push the refreshed estimated bands to that symbol's subscribers.
+    HL-only symbols have no Binance futures OI and simply never build a
+    map — shown honestly as an empty layer."""
+    futures_symbols = {spec.key: spec.binance.upper()
+                       for spec in SYMBOLS.values() if spec.binance}
+    async with ClientSession() as session:
+        while True:
+            for key, symbol in futures_symbols.items():
+                accumulator = STATE.accumulators[key]
+                price = accumulator.last_price
+                if price is None:
+                    continue
+                try:
+                    async with session.get(
+                        "https://fapi.binance.com/fapi/v1/openInterest",
+                        params={"symbol": symbol}, timeout=10,
+                    ) as response:
+                        data = await response.json()
+                    oi_usd = float(data["openInterest"]) * price
+                except Exception:  # noqa: BLE001 — poll is best-effort
+                    continue
+                now = time.time()
+                taker_delta = sum(
+                    (n if side == "buy" else -n)
+                    for ts, side, n in accumulator.pressure if ts >= now - LIQ_POLL_SECONDS)
+                accumulator.liq_estimator.observe(
+                    int(now * 1000), price, oi_usd, taker_delta)
+                message = json.dumps({"type": "liqmap", "symbol": key,
+                                      "bands": accumulator.liq_estimator.bands()})
+                for ws, sub in list(STATE.clients.items()):
+                    if sub["symbol"] == key and not ws.closed:
+                        await ws.send_str(message)
+            await asyncio.sleep(LIQ_POLL_SECONDS)
 
 
 async def heat_ring_loop() -> None:
@@ -447,6 +504,10 @@ async def send_symbol_seed(ws: web.WebSocketResponse, symbol: str) -> None:
                                   "cols": list(accumulator.heat)}))
     await ws.send_str(json.dumps({"type": "cvd", "symbol": symbol,
                                   "points": accumulator.cvd_points()}))
+    await ws.send_str(json.dumps({"type": "liqHistory", "symbol": symbol,
+                                  "events": STORE.recent_liquidations(symbol, 300)}))
+    await ws.send_str(json.dumps({"type": "liqmap", "symbol": symbol,
+                                  "bands": accumulator.liq_estimator.bands()}))
     if STATE.metrics:
         await ws.send_str(json.dumps({"type": "metrics", "data": STATE.metrics}))
 
@@ -515,7 +576,9 @@ async def main_async() -> None:
                  hyperliquid_adapter(STATE.on_book, STATE.on_trade),
                  bybit_adapter(STATE.on_book, STATE.on_trade),
                  okx_adapter(STATE.on_book, STATE.on_trade),
+                 binance_liquidation_adapter(STATE.on_liquidation),
                  binance_depth_poll(), metrics_poll(),
+                 liquidation_estimator_poll(),
                  heat_ring_loop(), broadcast_depth_loop()):
         asyncio.create_task(task)
     runner = web.AppRunner(build_app())

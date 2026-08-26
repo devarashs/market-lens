@@ -31,6 +31,12 @@ nothing Done unverified).
       per-symbol 24h% on the watchlist pills.
 - [x] Venue toggles (per-client filtered aggregation), tape threshold
       slider (×0.25–×4), heatmap/profile visibility toggles.
+- [x] **Liquidation layer** (2026-08-26, Arash's ask): real forceOrder
+      prints from Binance futures recorded to lens.db (unbackfillable —
+      the moat) + drawn as violet × marks; estimated liquidation-density
+      map from OI-delta × leverage-tier projection (assumptions stated in
+      market_lens/liqmap.py), bands consumed on price cross, 24h decay.
+      Feeds the arena's liquidation-cascade backlog thesis.
 - [ ] Coinbase, Kraken, dYdX v4 adapters (reference: docs/venue-feeds.md)
 - [ ] Symbol add/remove from the UI (config-only today)
 - [ ] Price alerts (browser notifications on level cross)

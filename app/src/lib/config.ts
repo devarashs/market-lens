@@ -49,6 +49,10 @@ export const COLORS = {
   gold: "#c9a35a",
   bidRgb: "63,163,108",
   askRgb: "196,86,74",
+  // Liquidation family: violet — deliberately outside the bid/ask hues so
+  // forced flow never reads as ordinary trading.
+  liqLongRgb: "196,111,174",   // longs died (forced sells)
+  liqShortRgb: "138,122,194",  // shorts died (forced buys)
 } as const;
 
 export const MAX_TAPE_ROWS = 120;

@@ -26,7 +26,8 @@ import type { Candle } from "../lib/types";
 import { currentThreshold, useLensStore, type ReadoutData } from "../store/lens";
 import { registerChartExporter } from "./chartExport";
 import {
-  drawBubbles, drawDepth, drawHeat, drawProfile, drawWallLines, type DrawEnv,
+  drawBubbles, drawDepth, drawHeat, drawLiqMap, drawLiqPrints, drawProfile,
+  drawWallLines, type DrawEnv,
 } from "./overlays";
 
 /* The four price-series types expose an identical surface for everything
@@ -221,12 +222,16 @@ export function LensChart() {
         priceToY: (price) => priceSeries.priceToCoordinate(price),
         timeToX: (time) => timeScale.timeToCoordinate(time as UTCTimestamp),
       };
+      if (state.layers.liqmap && state.liqMap.length) drawLiqMap(env, state.liqMap);
       if (state.layers.heat && state.heat.length) drawHeat(env, state.heat);
       if (state.layers.walls && state.depth?.walls) drawWallLines(env, state.depth, state.heat);
       if (state.layers.profile && state.depth) drawProfile(env, state.depth);
       if (state.layers.depth && state.depth) drawDepth(env, state.depth);
       if (state.layers.trades) {
         drawBubbles(env, state.trades, currentThreshold(state), state.timeframe);
+      }
+      if (state.layers.liqs && state.liqs.length) {
+        drawLiqPrints(env, state.liqs, state.timeframe);
       }
     }
 
@@ -316,6 +321,8 @@ export function LensChart() {
       store.subscribe((s) => s.depth, markDirty),
       store.subscribe((s) => s.heat, markDirty),
       store.subscribe((s) => s.trades, markDirty),
+      store.subscribe((s) => s.liqs, markDirty),
+      store.subscribe((s) => s.liqMap, markDirty),
       store.subscribe((s) => s.layers, markDirty),
       store.subscribe((s) => s.thresholdMult, markDirty),
       store.subscribe((s) => s.timeframe, markDirty),

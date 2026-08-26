@@ -100,9 +100,29 @@ def test_prune_before_removes_old_keeps_new(store):
     store.insert_depth_snapshot("BTC", 100, make_profile(bids=1, asks=1))
     store.insert_depth_snapshot("BTC", 900, make_profile(bids=1, asks=1))
     deleted = store.prune_before(500)
-    assert deleted == {"trades": 1, "depth_snapshots": 2}
+    # "liquidations" joined the pruned tables 2026-08-26 with the liq map.
+    assert deleted == {"trades": 1, "depth_snapshots": 2, "liquidations": 0}
     assert [row["ts"] for row in store.recent_trades("BTC", limit=10)] == [900]
     assert [row[0] for row in store.depth_range("BTC", 0, 10_000)] == [900, 900]
+
+
+# ------------------------------------------------------------- liquidations
+
+
+def test_liquidation_round_trip(store):
+    store.insert_liquidation("BTC", "binance-fut", {
+        "ts": 1000, "side": "long", "price": 79_000.0, "size": 2.0,
+        "notional": 158_000.004})
+    [row] = store.recent_liquidations("BTC", limit=10)
+    assert row == {"ts": 1000, "venue": "binance-fut", "side": "long",
+                   "price": 79_000.0, "size": 2.0, "notional": 158_000.0}
+    assert store.recent_liquidations("ETH", limit=10) == []
+
+
+def test_liquidation_rejects_buy_sell_sides(store):
+    with pytest.raises(Exception):
+        store.insert_liquidation("BTC", "binance-fut", {
+            "ts": 1, "side": "sell", "price": 1.0, "size": 1.0, "notional": 1.0})
 
 
 # -------------------------------------------------------------- persistence

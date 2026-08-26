@@ -105,6 +105,49 @@ async def binance_adapter(on_book, on_trade) -> None:
             await asyncio.sleep(RECONNECT_SECONDS)
 
 
+async def binance_liquidation_adapter(on_liquidation) -> None:
+    """Binance USDT-perp forced liquidations (<symbol>@forceOrder).
+
+    The one public stream that broadcasts REAL liquidations as they
+    happen. The forced order's side is the CLOSING side, so S=SELL means
+    a long died. Normalized callback:
+        on_liquidation(venue, symbol_key, {"ts", "side", "price", "size",
+                                           "notional"})
+    with side ∈ {"long", "short"} = who got liquidated. Same
+    failure-isolation contract as every other adapter.
+    """
+    stream_to_key = {spec.binance: spec.key
+                     for spec in SYMBOLS.values() if spec.binance}
+    streams = [f"{name}@forceOrder" for name in stream_to_key]
+    url = f"wss://fstream.binance.com/stream?streams={'/'.join(streams)}"
+
+    while True:
+        try:
+            async with websockets.connect(url, ping_interval=20, max_size=2**20) as ws:
+                _log("binance-futures: liquidation stream connected")
+                async for raw in ws:
+                    message = json.loads(raw)
+                    key = stream_to_key.get(message.get("stream", "").split("@")[0])
+                    order = message.get("data", {}).get("o", {})
+                    if key is None or not order:
+                        continue
+                    price = float(order.get("ap") or order.get("p") or 0)
+                    size = float(order.get("q", 0))
+                    if price <= 0 or size <= 0:
+                        continue
+                    on_liquidation("binance-fut", key, {
+                        "ts": int(order.get("T", time.time() * 1000)),
+                        "side": "long" if order.get("S") == "SELL" else "short",
+                        "price": price,
+                        "size": size,
+                        "notional": price * size,
+                    })
+        except Exception as error:  # noqa: BLE001 — isolation contract
+            _log(f"binance-futures: {error.__class__.__name__}: {error} — "
+                 f"reconnecting in {RECONNECT_SECONDS}s")
+            await asyncio.sleep(RECONNECT_SECONDS)
+
+
 async def hyperliquid_adapter(on_book, on_trade) -> None:
     """Hyperliquid perps: l2Book (full snapshots) + trades per coin."""
     coin_to_key = {spec.hyperliquid: spec.key
