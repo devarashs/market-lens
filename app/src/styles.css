@@ -172,6 +172,18 @@ body { margin: 0; background: var(--bg); color: var(--text);
      happily reported success). */
   z-index: 3;
 }
+.candle-countdown {
+  /* Above #overlay (z-index 3), pinned over the chart's top-right where
+     the price axis has no labels — the TradingView bar-close countdown. */
+  position: absolute; top: 8px; right: 10px; z-index: 4;
+  display: flex; align-items: baseline; gap: 6px;
+  padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none;
+}
+.candle-countdown b { color: var(--text); font-weight: 600; letter-spacing: 0.02em; }
+.candle-countdown.closing b { color: var(--color-gold); }
+
 .chart-footer {
   position: absolute; left: 0; right: 0; bottom: 0; height: 52px;
   display: flex; flex-direction: column; justify-content: center; gap: 2px;

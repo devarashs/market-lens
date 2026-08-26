@@ -65,6 +65,19 @@ SYMBOLS: dict[str, SymbolSpec] = {
     )
 }
 
+# Archive retention, in days per table (None = keep forever). Policy lives
+# here, not in the store, which only supplies the mechanism. Depth snapshots
+# are the file's bulk and age out first; forced-liquidation prints are kept
+# forever because no venue serves that history back.
+RETENTION_DAYS: dict[str, int | None] = {
+    "depth_snapshots": 14,
+    "trades": 90,
+    "flow_minutes": 90,
+    "oi_observations": 90,
+    "liquidations": None,
+}
+RETENTION_SWEEP_SECONDS = 6 * 3600
+
 BINANCE_WS = "wss://stream.binance.com:9443/stream"
 BINANCE_REST = "https://api.binance.com"
 BINANCE_REST_FALLBACK = "https://data-api.binance.vision"

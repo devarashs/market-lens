@@ -49,6 +49,8 @@ from market_lens.config import (
     HTTP_PORT,
     HYPERLIQUID_REST,
     RECORD_DIR,
+    RETENTION_DAYS,
+    RETENTION_SWEEP_SECONDS,
     SYMBOLS,
     WEB_DIR,
 )
@@ -89,6 +91,11 @@ class SymbolAccumulators:
         self.cvd_minutes: dict[int, float] = defaultdict(float)   # minute → Δnotional
         self.profile: dict[float, list[float]] = defaultdict(lambda: [0.0, 0.0])  # bin → [buy, sell]
         self.pressure: deque[tuple[float, str, float]] = deque()  # (ts, side, notional)
+        # Executed flow awaiting archival: minute (epoch s) → bin → [buy, sell].
+        # Flushed and dropped once the minute completes; this is only a
+        # write buffer, never a read path.
+        self.flow_pending: dict[int, dict[float, list[float]]] = defaultdict(
+            lambda: defaultdict(lambda: [0.0, 0.0]))
         self.heat: deque[list] = deque(maxlen=HEAT_RING_LENGTH)   # [ts, bids, asks]
         # Recent above-floor trades kept in memory for chart seeding — the
         # permanent archive stays whales-only, but the chart wants
@@ -104,11 +111,32 @@ class SymbolAccumulators:
             for key in sorted(self.cvd_minutes)[: len(self.cvd_minutes) - CVD_MAX_MINUTES]:
                 del self.cvd_minutes[key]
         price_bin = bin_price(trade["price"], SYMBOLS[symbol].price_bin)
-        self.profile[price_bin][0 if trade["side"] == "buy" else 1] += trade["notional"]
+        side_index = 0 if trade["side"] == "buy" else 1
+        self.profile[price_bin][side_index] += trade["notional"]
+        self.flow_pending[minute][price_bin][side_index] += trade["notional"]
         now = time.time()
         self.pressure.append((now, trade["side"], trade["notional"]))
         while self.pressure and self.pressure[0][0] < now - PRESSURE_WINDOW_SECONDS:
             self.pressure.popleft()
+
+    def seed_flow(self, rows: list[tuple]) -> None:
+        """Fold archived flow minutes — (ts_ms, price_bin, buy, sell) — back
+        into the CVD series and the volume profile. Both are derived from
+        the FULL trade stream, which is far too large to archive, so the
+        per-minute aggregate is what makes them survive a restart."""
+        for ts_ms, price_bin, buy_usd, sell_usd in rows:
+            self.cvd_minutes[ts_ms // 1000] += buy_usd - sell_usd
+            bucket = self.profile[price_bin]
+            bucket[0] += buy_usd
+            bucket[1] += sell_usd
+
+    def drain_completed_flow(self, current_minute: int
+                             ) -> list[tuple[int, dict[float, list[float]]]]:
+        """Remove and return every buffered minute before `current_minute`.
+        The open minute stays buffered so it is archived exactly once, when
+        complete."""
+        done = sorted(m for m in self.flow_pending if m < current_minute)
+        return [(minute, self.flow_pending.pop(minute)) for minute in done]
 
     def vwap(self) -> float | None:
         """Session VWAP from the executed-volume profile (notional-weighted)."""
@@ -353,14 +381,47 @@ async def liquidation_estimator_poll() -> None:
                 taker_delta = sum(
                     (n if side == "buy" else -n)
                     for ts, side, n in accumulator.pressure if ts >= now - LIQ_POLL_SECONDS)
-                accumulator.liq_estimator.observe(
-                    int(now * 1000), price, oi_usd, taker_delta)
+                ts_ms = int(now * 1000)
+                # Archive BEFORE observing: these four numbers are the
+                # estimator's entire input, and keeping them is what lets
+                # a restart replay the map instead of starting blank.
+                STORE.insert_oi_observation(key, ts_ms, price, oi_usd, taker_delta)
+                accumulator.liq_estimator.observe(ts_ms, price, oi_usd, taker_delta)
                 message = fastjson.dumps_str({"type": "liqmap", "symbol": key,
                                       "bands": accumulator.liq_estimator.bands()})
                 for ws, sub in list(STATE.clients.items()):
                     if sub["symbol"] == key and not ws.closed:
                         await ws.send_str(message)
             await asyncio.sleep(LIQ_POLL_SECONDS)
+
+
+async def flow_archive_loop() -> None:
+    """Persist each completed minute of executed flow, per symbol."""
+    while True:
+        await asyncio.sleep(20)
+        current_minute = int(time.time() / 60) * 60
+        for symbol, accumulator in STATE.accumulators.items():
+            for minute, bins in accumulator.drain_completed_flow(current_minute):
+                try:
+                    STORE.insert_flow_minute(symbol, minute * 1000, bins)
+                except Exception as error:  # noqa: BLE001 — archiving is best-effort
+                    print(f"flow archive {symbol}: "
+                          f"{error.__class__.__name__}: {error}", flush=True)
+
+
+async def retention_loop() -> None:
+    """Apply the archive retention policy. The store has had a pruning hook
+    since it was written and nothing ever called it — the database grew
+    without bound (found in the persistence audit, 2026-08-26)."""
+    while True:
+        try:
+            deleted = STORE.apply_retention(RETENTION_DAYS, int(time.time() * 1000))
+            pruned = {table: count for table, count in deleted.items() if count}
+            if pruned:
+                print(f"retention: pruned {pruned}", flush=True)
+        except Exception as error:  # noqa: BLE001 — never take the collector down
+            print(f"retention: {error.__class__.__name__}: {error}", flush=True)
+        await asyncio.sleep(RETENTION_SWEEP_SECONDS)
 
 
 async def heat_ring_loop() -> None:
@@ -654,8 +715,65 @@ def seed_heat_rings() -> None:
                   f"({span_min:.0f} min from archive)", flush=True)
 
 
+LIQ_REPLAY_HOURS = 48  # two half-lives; older inventory is <25% and mostly consumed
+
+
+def seed_liq_estimators() -> None:
+    """Rebuild each symbol's liquidation map by replaying archived OI
+    observations, so a restart no longer blanks it (Arash, 2026-08-26:
+    "every time the vps version restarts the liq map has to be rebuilt").
+
+    Replay, not snapshot restore: the estimator is a pure function of its
+    observation sequence, so feeding the archive back through `observe`
+    yields the identical map — including the decay and the consumption of
+    every band price traded through while the process was down."""
+    cutoff_ms = int((time.time() - LIQ_REPLAY_HOURS * 3600) * 1000)
+    for symbol, accumulator in STATE.accumulators.items():
+        rows = STORE.oi_observations_since(symbol, cutoff_ms)
+        for ts_ms, price, oi_usd, taker_delta_usd in rows:
+            accumulator.liq_estimator.observe(ts_ms, price, oi_usd, taker_delta_usd)
+        bands = accumulator.liq_estimator.bands()
+        if rows:
+            span_h = (rows[-1][0] - rows[0][0]) / 3_600_000
+            print(f"liq map seeded: {symbol} {len(bands)} bands from "
+                  f"{len(rows)} observations ({span_h:.1f}h)", flush=True)
+
+
+CVD_SEED_HOURS = 24  # matches CVD_MAX_MINUTES, the in-memory series length
+
+
+def seed_flow() -> None:
+    """Rebuild the CVD series and volume profile from archived flow minutes."""
+    cutoff_ms = int((time.time() - CVD_SEED_HOURS * 3600) * 1000)
+    for symbol, accumulator in STATE.accumulators.items():
+        rows = STORE.flow_minutes_since(symbol, cutoff_ms)
+        if not rows:
+            continue
+        accumulator.seed_flow(rows)
+        span_h = (rows[-1][0] - rows[0][0]) / 3_600_000
+        print(f"flow seeded: {symbol} {len(rows)} minute-bins "
+              f"({span_h:.1f}h of CVD + profile)", flush=True)
+
+
 async def main_async() -> None:
+    # Listen FIRST, then rebuild memory from the archive, then start the
+    # venue streams. Seeding costs a few seconds of replay; doing it before
+    # the socket is open would 502 every page load across a redeploy, and
+    # doing it after the adapters start would race live trades against the
+    # archived minute being folded in.
+    runner = web.AppRunner(build_app())
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", HTTP_PORT)
+    await site.start()
+    print(f"Market Lens serving on http://127.0.0.1:{HTTP_PORT}", flush=True)
+
+    seed_started = time.perf_counter()
     seed_heat_rings()
+    seed_liq_estimators()
+    seed_flow()
+    print(f"archive replay complete in {time.perf_counter() - seed_started:.1f}s",
+          flush=True)
+
     for task in (binance_adapter(STATE.on_book, STATE.on_trade),
                  hyperliquid_adapter(STATE.on_book, STATE.on_trade),
                  bybit_adapter(STATE.on_book, STATE.on_trade),
@@ -668,13 +786,9 @@ async def main_async() -> None:
                  binance_liquidation_adapter(STATE.on_liquidation),
                  binance_depth_poll(), binance_futures_depth_poll(), metrics_poll(),
                  liquidation_estimator_poll(),
+                 flow_archive_loop(), retention_loop(),
                  heat_ring_loop(), broadcast_depth_loop()):
         asyncio.create_task(task)
-    runner = web.AppRunner(build_app())
-    await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", HTTP_PORT)
-    await site.start()
-    print(f"Market Lens serving on http://127.0.0.1:{HTTP_PORT}", flush=True)
     await asyncio.Event().wait()
 
 

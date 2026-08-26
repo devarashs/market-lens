@@ -64,7 +64,44 @@ CREATE TABLE IF NOT EXISTS liquidations (
     notional_usd REAL    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_liq_symbol_ts ON liquidations (symbol, ts);
+
+-- Open-interest observations: the estimated liquidation map's raw INPUTS,
+-- one row per symbol per poll. Recording the inputs rather than the
+-- computed bands means a restart replays to the identical map instead of
+-- restoring a snapshot — and the estimator's whole history stays
+-- reproducible if its assumptions are ever revised (2026-08-26).
+CREATE TABLE IF NOT EXISTS oi_observations (
+    ts              INTEGER NOT NULL,  -- observation time, epoch ms
+    symbol          TEXT    NOT NULL,
+    price           REAL    NOT NULL,  -- price the new inventory opened near
+    oi_usd          REAL    NOT NULL,  -- open interest, notional USD
+    taker_delta_usd REAL    NOT NULL   -- interval net aggressive flow
+);
+CREATE INDEX IF NOT EXISTS idx_oi_symbol_ts ON oi_observations (symbol, ts);
+
+-- Per-minute executed flow, binned by price. The full trade stream is far
+-- too large to archive, but its two derived views — the CVD series and the
+-- volume profile (and the VWAP drawn from it) — were memory-only and blanked
+-- on every restart. One minute bucket per price bin restores both, and is
+-- real history the multi-day profile can later be built on (2026-08-26).
+CREATE TABLE IF NOT EXISTS flow_minutes (
+    -- Epoch MS like every other table here, even though the bucket is a
+    -- minute: `prune_before` compares raw ts against one cutoff, so a
+    -- seconds-valued column would be pruned to nothing on first run.
+    ts        INTEGER NOT NULL,  -- minute bucket start, epoch ms
+    symbol    TEXT    NOT NULL,
+    price_bin REAL    NOT NULL,
+    buy_usd   REAL    NOT NULL,
+    sell_usd  REAL    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_flow_symbol_ts ON flow_minutes (symbol, ts);
 """
+
+# Every archive table, in one place: `counts` and `prune_before` both walk
+# this, so a new table joins retention by construction rather than by
+# somebody remembering to add it twice.
+_TABLES = ("trades", "depth_snapshots", "liquidations", "oi_observations",
+           "flow_minutes")
 
 
 class LensStore:
@@ -132,6 +169,29 @@ class LensStore:
         )
         self.connection.commit()
 
+    def insert_oi_observation(self, symbol: str, ts_ms: int, price: float,
+                              oi_usd: float, taker_delta_usd: float) -> None:
+        """Archive one open-interest observation — exactly the arguments
+        fed to `LiquidationEstimator.observe`, so the map can be replayed."""
+        self.connection.execute(
+            "INSERT INTO oi_observations (ts, symbol, price, oi_usd,"
+            " taker_delta_usd) VALUES (?, ?, ?, ?, ?)",
+            (ts_ms, symbol, price, oi_usd, taker_delta_usd),
+        )
+        self.connection.commit()
+
+    def insert_flow_minute(self, symbol: str, minute_ms: int,
+                           bins: dict[float, list[float]]) -> None:
+        """Archive one completed minute of executed flow: {price_bin:
+        [buy_usd, sell_usd]}. Called once per minute per symbol."""
+        self.connection.executemany(
+            "INSERT INTO flow_minutes (ts, symbol, price_bin, buy_usd, sell_usd)"
+            " VALUES (?, ?, ?, ?, ?)",
+            [(minute_ms, symbol, price_bin, round(buy, 2), round(sell, 2))
+             for price_bin, (buy, sell) in bins.items()],
+        )
+        self.connection.commit()
+
     # -------------------------------------------------------------- reads
 
     def recent_liquidations(self, symbol: str, limit: int) -> list[dict]:
@@ -172,22 +232,59 @@ class LensStore:
             (symbol, start_ms, end_ms),
         ).fetchall()
 
+    def oi_observations_since(self, symbol: str, start_ms: int) -> list[tuple]:
+        """(ts, price, oi_usd, taker_delta_usd) from `start_ms`, oldest
+        first — replay order for rebuilding a liquidation estimator."""
+        return self.connection.execute(
+            "SELECT ts, price, oi_usd, taker_delta_usd FROM oi_observations"
+            " WHERE symbol = ? AND ts >= ? ORDER BY ts",
+            (symbol, start_ms),
+        ).fetchall()
+
+    def flow_minutes_since(self, symbol: str, start_ms: int) -> list[tuple]:
+        """(ts_ms, price_bin, buy_usd, sell_usd) from `start_ms`, oldest
+        first — the CVD series and volume profile are both folded from this."""
+        return self.connection.execute(
+            "SELECT ts, price_bin, buy_usd, sell_usd FROM flow_minutes"
+            " WHERE symbol = ? AND ts >= ? ORDER BY ts",
+            (symbol, start_ms),
+        ).fetchall()
+
     def counts(self) -> dict[str, int]:
         return {
             table: self.connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            for table in ("trades", "depth_snapshots", "liquidations")
+            for table in _TABLES
         }
 
     # ---------------------------------------------------------- retention
 
     def prune_before(self, cutoff_ms: int) -> dict[str, int]:
-        """Delete rows older than `cutoff_ms` from both tables; returns
+        """Delete rows older than `cutoff_ms` from every table; returns
         deleted counts per table. The retention hook — the *policy* (how
         long to keep) belongs to whoever schedules this, not the store."""
         deleted = {}
-        for table in ("trades", "depth_snapshots", "liquidations"):
+        for table in _TABLES:
             cursor = self.connection.execute(
                 f"DELETE FROM {table} WHERE ts < ?", (cutoff_ms,))
+            deleted[table] = cursor.rowcount
+        self.connection.commit()
+        return deleted
+
+    def apply_retention(self, policy: dict[str, int | None],
+                        now_ms: int) -> dict[str, int]:
+        """Per-table retention: `policy` maps table → days to keep, or None
+        to keep forever. Uniform pruning would be wrong here — forced
+        liquidation prints exist nowhere else and must never age out, while
+        depth snapshots are the bulk of the file and must."""
+        deleted = {}
+        for table, days in policy.items():
+            if table not in _TABLES:
+                raise KeyError(f"retention policy names unknown table {table!r}")
+            if days is None:
+                continue
+            cursor = self.connection.execute(
+                f"DELETE FROM {table} WHERE ts < ?",
+                (now_ms - days * 86_400_000,))
             deleted[table] = cursor.rowcount
         self.connection.commit()
         return deleted

@@ -100,10 +100,74 @@ def test_prune_before_removes_old_keeps_new(store):
     store.insert_depth_snapshot("BTC", 100, make_profile(bids=1, asks=1))
     store.insert_depth_snapshot("BTC", 900, make_profile(bids=1, asks=1))
     deleted = store.prune_before(500)
-    # "liquidations" joined the pruned tables 2026-08-26 with the liq map.
-    assert deleted == {"trades": 1, "depth_snapshots": 2, "liquidations": 0}
+    # Tables joined this dict as the schema grew: "liquidations" with the
+    # liq map, then "oi_observations"/"flow_minutes" with the persistence
+    # audit — prune_before deliberately walks every table.
+    assert deleted == {"trades": 1, "depth_snapshots": 2, "liquidations": 0,
+                       "oi_observations": 0, "flow_minutes": 0}
     assert [row["ts"] for row in store.recent_trades("BTC", limit=10)] == [900]
     assert [row[0] for row in store.depth_range("BTC", 0, 10_000)] == [900, 900]
+
+
+DAY_MS = 86_400_000
+
+
+def test_apply_retention_is_per_table(store):
+    now = 30 * DAY_MS
+    store.insert_trade("BTC", "binance", make_trade(ts=now - 20 * DAY_MS))
+    store.insert_depth_snapshot("BTC", now - 20 * DAY_MS, make_profile(bids=1, asks=0))
+    store.insert_liquidation("BTC", "binance-fut", {
+        "ts": now - 20 * DAY_MS, "side": "long", "price": 1.0, "size": 1.0,
+        "notional": 1.0})
+    deleted = store.apply_retention(
+        {"depth_snapshots": 14, "trades": 90, "liquidations": None}, now)
+    # Depth aged out; trades are inside their window; liquidations are
+    # never pruned, so the policy does not even name a cutoff for them.
+    assert deleted == {"depth_snapshots": 1, "trades": 0}
+    assert store.counts()["liquidations"] == 1
+    assert store.counts()["trades"] == 1
+
+
+def test_apply_retention_rejects_unknown_table(store):
+    with pytest.raises(KeyError):
+        store.apply_retention({"tradez": 7}, 0)
+
+
+# ------------------------------------------------------------ derived flow
+
+
+def test_flow_minute_round_trip_and_ordering(store):
+    store.insert_flow_minute("BTC", 120_000, {79_000.0: [5_000.0, 1_000.0],
+                                              79_010.0: [0.0, 2_500.567]})
+    store.insert_flow_minute("BTC", 60_000, {79_000.0: [100.0, 0.0]})
+    store.insert_flow_minute("ETH", 60_000, {4_000.0: [7.0, 8.0]})
+    rows = store.flow_minutes_since("BTC", 0)
+    assert [row[0] for row in rows] == [60_000, 120_000, 120_000]
+    assert (120_000, 79_010.0, 0.0, 2_500.57) in rows
+    assert store.flow_minutes_since("BTC", 120_000) == [
+        (120_000, 79_000.0, 5_000.0, 1_000.0),
+        (120_000, 79_010.0, 0.0, 2_500.57),
+    ]
+
+
+def test_flow_minute_empty_bins_writes_nothing(store):
+    store.insert_flow_minute("BTC", 60_000, {})
+    assert store.counts()["flow_minutes"] == 0
+
+
+# ---------------------------------------------------- OI observations (liq map)
+
+
+def test_oi_observation_round_trip(store):
+    store.insert_oi_observation("BTC", 1000, 79_000.0, 1e9, -250_000.0)
+    store.insert_oi_observation("BTC", 500, 78_900.0, 9e8, 100_000.0)
+    store.insert_oi_observation("ETH", 1000, 4_000.0, 5e8, 0.0)
+    assert store.oi_observations_since("BTC", 0) == [
+        (500, 78_900.0, 9e8, 100_000.0),
+        (1000, 79_000.0, 1e9, -250_000.0),
+    ]
+    assert store.oi_observations_since("BTC", 600) == [
+        (1000, 79_000.0, 1e9, -250_000.0)]
 
 
 # ------------------------------------------------------------- liquidations

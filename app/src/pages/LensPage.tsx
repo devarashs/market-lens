@@ -6,6 +6,7 @@
 import { useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
+import { CandleCountdown } from "../components/CandleCountdown";
 import { ChartFooter } from "../components/ChartFooter";
 import { Header } from "../components/Header";
 import { MetricsBar } from "../components/MetricsBar";
@@ -106,6 +107,7 @@ export function LensPage() {
       <SignalsBar />
       <main className="layout">
         <section className="chart-wrap">
+          <CandleCountdown />
           <LensChart />
           <ChartFooter />
         </section>
