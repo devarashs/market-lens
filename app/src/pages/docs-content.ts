@@ -154,6 +154,37 @@ price = short covering rather than real demand. Classic divergence tool —
 and pure facts, no book claims involved.</p>`,
   },
   {
+    id: "positioning",
+    title: "Net long/short positioning",
+    body: `
+<p>The violet line in its own band along the bottom of the chart: how the
+market is <b>leaning</b>, from &minus;100% (everyone short) to +100%
+(everyone long). Its own price scale, because a lean is neither a price
+nor a dollar total.</p>
+<p>Two families of source, and they measure different populations — which
+is why the footer names the one it is drawing rather than blending them:</p>
+<p><b>Ratios (Binance futures).</b> <i>All accounts</i> counts every
+account equally, so it reads as retail sentiment. <i>Top 20% accounts</i>
+is the same vote restricted to the biggest margin balances. <i>Top 20%
+positions</i> weights by actual notional and is the closest thing to
+"where the money is" — it is the default where available.</p>
+<p><b>Position size (Bitfinex margin).</b> Real borrowed size held long
+and short, in coin. This is the series behind the BTCUSDLONGS /
+BTCUSDSHORTS charts on TradingView, and the only source here reporting
+size rather than a proportion. Bitfinex margin runs persistently long, so
+read its <i>changes</i>, not its level.</p>
+<p>Coverage is uneven and stated plainly: the five Binance-listed symbols
+get all three ratios, ten coins get the Bitfinex book, and the equity
+perps get neither — the footer says "no source for this symbol" instead
+of drawing an empty line. Both APIs serve only a trailing window (Binance
+~30 days, Bitfinex about a week), so every reading is archived to
+<code>lens.db</code> as it arrives; the record outlives what either will
+serve back.</p>
+<p>What it is not: positioning is a <i>claim</i> about who holds what, not
+a forecast. Crowded books cut both ways — a heavily long market has more
+fuel below it, which is the same reasoning as the liquidation map.</p>`,
+  },
+  {
     id: "tape",
     title: "Big-trade tape & chart dashes",
     body: `

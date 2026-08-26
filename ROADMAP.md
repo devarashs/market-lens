@@ -79,15 +79,24 @@ nothing Done unverified).
       BTC/BNB, 10x on ETH, 1000x under on DOGE — 63k phantom whale prints
       and a fake wall in the depth aggregate. Archive repaired, backup
       kept. Caught by a CVD calibration control reading 777x.
-- [ ] **Per-venue accumulators so the venue filter reaches profile / CVD /
-      pressure / heatmap** — Arash asked for the filter to apply
-      "wherever it can"; today it reaches the book (bids/asks/walls/
-      imbalance) and the client-side tape/dashes/sounds, but those four
-      aggregate at ingest and ignore it. **The oldest outstanding request
-      in this repo.**
-- [ ] Net long/short positioning line on the chart (Arash 2026-08-26) —
-      source not yet chosen: HL vault net positioning, Binance
-      long/short account ratios, or our own cumulative taker position
+- [x] **Per-venue accumulators — the venue filter now reaches the profile,
+      the VWAP, CVD, the pressure gauge and the tape/combined verdicts**
+      (2026-08-26). Profile and pressure are keyed by venue in memory;
+      `flow_minutes` gained a venue column (explicit migration) and the
+      filtered CVD is summed in SQL, because a per-venue minute series in
+      memory would run to ~1M floats. *Verified live: BTC tape 5m went
+      from $5.61M/$28.62M across nine venues to $325K/$931K on Coinbase
+      alone.* Two stated limits: the heatmap stays all-venue (a ring per
+      venue costs ~250MB) and pre-2026-08-26 flow rows have no venue, so
+      they count unfiltered only.
+- [x] **Net long/short positioning line** (2026-08-26): Binance ratio
+      metrics (all accounts / top-20% accounts / top-20% positions) and
+      the Bitfinex margin book, normalised to a -100..+100 lean on its own
+      chart scale, with a source picker. Both APIs serve only a trailing
+      window, so every reading is archived — 42.5k rows in the first pass.
+- [ ] Positioning as a strategy input — tested under the arena's
+      promotion criteria like everything else, never trusted because it
+      looks suggestive
 - [ ] Symbol add/remove from the UI (config-only today)
 - [ ] Price alerts (browser notifications on level cross)
 
