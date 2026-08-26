@@ -241,7 +241,11 @@ export const useLensStore = create<LensState>()(
     },
 
     setTimeframe(timeframe) {
-      set({ timeframe: legalTimeframe(get().symbol, timeframe) });
+      const legal = legalTimeframe(get().symbol, timeframe);
+      if (legal === get().timeframe) return;
+      // Merge-based candle updates make stale rows poisonous across a
+      // timeframe switch — clear so the next poll starts clean.
+      set({ timeframe: legal, candleRows: [] });
     },
 
     setChartStyle(style) {

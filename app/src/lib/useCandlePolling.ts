@@ -6,6 +6,7 @@
 
 import { useEffect } from "react";
 
+import { mergeCandles } from "./candles";
 import type { Candle } from "./types";
 import { useLensStore } from "../store/lens";
 
@@ -19,12 +20,15 @@ export function useCandlePolling(): void {
     async function load(): Promise<void> {
       try {
         const response = await fetch(
-          `/klines?symbol=${symbol}&interval=${timeframe}&limit=500`,
+          `/klines?symbol=${symbol}&interval=${timeframe}&limit=1000`,
           { signal: controller.signal },
         );
         const rows: Candle[] | { error: string } = await response.json();
         if (Array.isArray(rows)) {
-          useLensStore.getState().setCandleRows(rows);
+          // Merge, don't replace: pan-left backfill lives in candleRows
+          // and a poll must never throw that history away.
+          const store = useLensStore.getState();
+          store.setCandleRows(mergeCandles(store.candleRows, rows));
         }
       } catch {
         // Transient gap: retry on the next tick; the connection pill

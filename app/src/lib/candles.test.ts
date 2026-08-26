@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { computeEma, computeSma, styledRows, toHeikinAshi } from "./candles";
+import { computeEma, computeSma, mergeCandles, styledRows, toHeikinAshi } from "./candles";
 import type { Candle } from "./types";
 
 function candle(time: number, open: number, high: number, low: number, close: number): Candle {
@@ -90,5 +90,26 @@ describe("computeEma", () => {
     const rows = Array.from({ length: 50 }, (_, i) => candle(i, 5, 5, 5, 5));
     const points = computeEma(rows, 10);
     expect(points[points.length - 1].value).toBeCloseTo(5);
+  });
+});
+
+describe("mergeCandles", () => {
+  const bar = (time: number, close: number) =>
+    ({ time, open: close, high: close, low: close, close });
+
+  it("unions by time, sorted ascending", () => {
+    const merged = mergeCandles([bar(30, 3), bar(40, 4)], [bar(10, 1), bar(20, 2)]);
+    expect(merged.map((r) => r.time)).toEqual([10, 20, 30, 40]);
+  });
+
+  it("incoming wins on overlap (fresh forming bar replaces stale)", () => {
+    const merged = mergeCandles([bar(10, 1), bar(20, 999)], [bar(20, 2)]);
+    expect(merged.find((r) => r.time === 20)!.close).toBe(2);
+    expect(merged).toHaveLength(2);
+  });
+
+  it("handles empty sides", () => {
+    expect(mergeCandles([], [bar(1, 1)])).toHaveLength(1);
+    expect(mergeCandles([bar(1, 1)], [])).toHaveLength(1);
   });
 });

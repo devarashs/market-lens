@@ -479,15 +479,20 @@ async def klines_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": "1s unavailable for this symbol"},
                                  status=400)
     limit = min(int(request.query.get("limit", "500")), 1000)
+    # History pagination: candles strictly before endTime (epoch ms) —
+    # the client's pan-left backfill.
+    end_time = request.query.get("endTime")
 
     async with ClientSession() as session:
         if spec.binance is not None:
+            params = {"symbol": spec.binance.upper(),
+                      "interval": interval, "limit": limit}
+            if end_time is not None:
+                params["endTime"] = int(end_time)
             for base in (BINANCE_REST, BINANCE_REST_FALLBACK):
                 try:
                     async with session.get(
-                        f"{base}/api/v3/klines",
-                        params={"symbol": spec.binance.upper(),
-                                "interval": interval, "limit": limit}, timeout=15,
+                        f"{base}/api/v3/klines", params=params, timeout=15,
                     ) as response:
                         rows = await response.json()
                         return web.json_response([
@@ -502,12 +507,14 @@ async def klines_handler(request: web.Request) -> web.Response:
 
         interval_ms = {"1m": 60, "5m": 300, "15m": 900,
                        "1h": 3600, "4h": 14400, "1d": 86400}[interval] * 1000
-        start = int(time.time() * 1000) - limit * interval_ms
+        anchor = int(end_time) if end_time is not None else int(time.time() * 1000)
+        request_body = {"coin": spec.hyperliquid, "interval": interval,
+                        "startTime": anchor - limit * interval_ms}
+        if end_time is not None:
+            request_body["endTime"] = anchor
         async with session.post(
             f"{HYPERLIQUID_REST}/info",
-            json={"type": "candleSnapshot",
-                  "req": {"coin": spec.hyperliquid, "interval": interval,
-                          "startTime": start}}, timeout=15,
+            json={"type": "candleSnapshot", "req": request_body}, timeout=15,
         ) as response:
             rows = await response.json()
             return web.json_response([

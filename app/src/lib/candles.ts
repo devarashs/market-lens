@@ -73,3 +73,15 @@ export function computeMa(rows: Candle[], def: MaDef): LinePoint[] {
   return def.kind === "sma" ? computeSma(rows, def.length)
                             : computeEma(rows, def.length);
 }
+
+
+/** Union of two candle sets keyed by bar time, `incoming` winning on
+    overlap (a poll's fresh forming bar replaces its stale copy), sorted
+    ascending. Powers both the 15s poll (latest window merged onto kept
+    history) and pan-left backfill (older page merged underneath). */
+export function mergeCandles(existing: Candle[], incoming: Candle[]): Candle[] {
+  const byTime = new Map<number, Candle>();
+  for (const row of existing) byTime.set(row.time, row);
+  for (const row of incoming) byTime.set(row.time, row);
+  return [...byTime.values()].sort((a, b) => a.time - b.time);
+}

@@ -21,7 +21,7 @@ import {
 import { useEffect, useRef } from "react";
 
 import { COLORS, MA_DEFS, type ChartStyle } from "../lib/config";
-import { computeMa, styledRows } from "../lib/candles";
+import { computeMa, mergeCandles, styledRows } from "../lib/candles";
 import type { Candle } from "../lib/types";
 import { currentThreshold, useLensStore, type ReadoutData } from "../store/lens";
 import { registerChartExporter } from "./chartExport";
@@ -248,7 +248,39 @@ export function LensChart() {
     rafId = requestAnimationFrame(frame);
 
     const markDirty = (): void => { dirty = true; };
-    chart.timeScale().subscribeVisibleLogicalRangeChange(markDirty); // pan/zoom
+
+    // ------------------------------------------- history backfill
+    // Panning near the left edge fetches the next 1000 older bars
+    // (server passes endTime through to the venue), merged underneath.
+    // The initial load is a window, not the limit of history.
+    let loadingOlder = false;
+    let historyExhausted = false;
+    async function loadOlderCandles(): Promise<void> {
+      if (loadingOlder || historyExhausted) return;
+      const { candleRows, symbol, timeframe } = store.getState();
+      const oldest = candleRows[0];
+      if (!oldest) return;
+      loadingOlder = true;
+      try {
+        const response = await fetch(
+          `/klines?symbol=${symbol}&interval=${timeframe}` +
+          `&limit=1000&endTime=${oldest.time * 1000 - 1}`);
+        const rows: Candle[] = await response.json();
+        if (!Array.isArray(rows) || rows.length === 0) {
+          historyExhausted = true;
+          return;
+        }
+        const state = store.getState();
+        if (state.symbol !== symbol || state.timeframe !== timeframe) return;
+        state.setCandleRows(mergeCandles(rows, state.candleRows));
+      } catch { /* transient; the next pan retries */ }
+      finally { loadingOlder = false; }
+    }
+
+    chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+      markDirty(); // pan/zoom repaints overlays
+      if (range !== null && range.from < 30) loadOlderCandles();
+    });
 
     // ------------------------------------------------------ crosshair
     chart.subscribeCrosshairMove((param) => {
@@ -316,9 +348,11 @@ export function LensChart() {
         }
       }),
       store.subscribe((s) => s.symbol, () => {
+        historyExhausted = false;
         loadDayLevels();
         chart.timeScale().scrollToRealTime();
       }),
+      store.subscribe((s) => s.timeframe, () => { historyExhausted = false; }),
       // Redraw triggers for the overlay planes.
       store.subscribe((s) => s.depth, markDirty),
       store.subscribe((s) => s.heat, markDirty),
