@@ -66,6 +66,7 @@ from market_lens.positioning import (
     parse_bitfinex_sizes,
 )
 from market_lens.store import LensStore
+from market_lens.symbolinfo import COINGECKO_IDS, build as build_symbol_info
 from market_lens.venues import (
     binance_adapter,
     binance_futures_trades_adapter,
@@ -898,6 +899,107 @@ async def broadcast_depth_loop() -> None:
 # -------------------------------------------------------------------- klines
 
 
+COINGECKO_URL = "https://api.coingecko.com/api/v3/coins/markets"
+COINGECKO_POLL_SECONDS = 600
+# symbol -> latest CoinGecko row. Market cap moves slowly and the free API
+# is rate-limited, so one request every ten minutes covers all 22 coins.
+MARKET_DATA: dict[str, dict] = {}
+# Candles for the info panel, cached briefly so reopening it costs nothing.
+_INFO_CACHE: dict[str, tuple[float, dict]] = {}
+INFO_CACHE_SECONDS = 60
+
+
+async def coingecko_poll() -> None:
+    """Market cap, supply and ATH for the coins. Nothing here exists for
+    the equity perps — a perp on Nvidia has no issuer or float — and the
+    panel states that rather than borrowing the underlying's numbers."""
+    await asyncio.sleep(20)
+    ids = ",".join(sorted(set(COINGECKO_IDS.values())))
+    reverse = {value: key for key, value in COINGECKO_IDS.items()}
+    async with ClientSession() as session:
+        while True:
+            try:
+                async with session.get(
+                    COINGECKO_URL,
+                    params={"vs_currency": "usd", "ids": ids,
+                            "price_change_percentage": "1h,24h,7d,30d,1y"},
+                    timeout=25,
+                ) as response:
+                    rows = await response.json()
+                if isinstance(rows, list):
+                    for row in rows:
+                        key = reverse.get(row.get("id"))
+                        if key:
+                            MARKET_DATA[key] = row
+            except Exception as error:  # noqa: BLE001 — reference data is best-effort
+                print(f"coingecko: {error.__class__.__name__}: {error}", flush=True)
+            await asyncio.sleep(COINGECKO_POLL_SECONDS)
+
+
+async def _fetch_candles(session, spec, interval: str, limit: int) -> list[dict]:
+    """Raw candles keeping VOLUME, which /klines drops — the info panel is
+    the one caller that needs it. Normalised to Hyperliquid's field names,
+    with Binance's exact quote volume carried through as `q`."""
+    if spec.binance is not None:
+        async with session.get(
+            f"{BINANCE_REST}/api/v3/klines",
+            params={"symbol": spec.binance.upper(), "interval": interval,
+                    "limit": limit}, timeout=20,
+        ) as response:
+            rows = await response.json()
+        return [{"t": row[0], "o": row[1], "h": row[2], "l": row[3],
+                 "c": row[4], "v": row[5], "q": row[7]} for row in rows]
+
+    interval_ms = {"1h": 3600, "1d": 86400}[interval] * 1000
+    now_ms = int(time.time() * 1000)
+    async with session.post(
+        f"{HYPERLIQUID_REST}/info",
+        json={"type": "candleSnapshot",
+              "req": {"coin": spec.hyperliquid, "interval": interval,
+                      "startTime": now_ms - limit * interval_ms,
+                      "endTime": now_ms}},
+        timeout=25,
+    ) as response:
+        rows = await response.json()
+    return rows if isinstance(rows, list) else []
+
+
+async def symbol_info_handler(request: web.Request) -> web.Response:
+    """Reference statistics for one symbol — the info panel's payload."""
+    symbol = request.query.get("symbol", "BTC")
+    spec = SYMBOLS.get(symbol)
+    if spec is None:
+        return web.json_response({"error": "unknown symbol"}, status=400)
+
+    cached = _INFO_CACHE.get(symbol)
+    if cached and time.time() - cached[0] < INFO_CACHE_SECONDS:
+        return web.json_response(cached[1])
+
+    try:
+        async with ClientSession() as session:
+            daily = await _fetch_candles(session, spec, "1d", 400)
+            hourly = await _fetch_candles(session, spec, "1h", 3)
+    except Exception as error:  # noqa: BLE001
+        return web.json_response(
+            {"error": f"candle fetch failed: {error.__class__.__name__}"}, status=502)
+
+    day_ago = int((time.time() - 86_400) * 1000)
+    positioning = STORE.positioning_series(symbol, day_ago)
+    payload = build_symbol_info(
+        symbol, spec.asset_class, daily, hourly,
+        MARKET_DATA.get(symbol), STATE.metrics.get(symbol),
+        extras={
+            "venues": STATE.venues_for(symbol),
+            "liquidations24h": STORE.liquidation_totals(symbol, day_ago),
+            # Our own recorded series, which no data provider sells back.
+            "positioning": {metric: points[-1][1]
+                            for metric, points in positioning.items() if points},
+        },
+    )
+    _INFO_CACHE[symbol] = (time.time(), payload)
+    return web.json_response(payload)
+
+
 async def klines_handler(request: web.Request) -> web.Response:
     """Normalized candles: [{time, open, high, low, close}], any interval."""
     symbol = request.query.get("symbol", "BTC")
@@ -1080,6 +1182,7 @@ def build_app() -> web.Application:
     app.router.add_get("/", index_handler)
     app.router.add_get("/ws", ws_handler)
     app.router.add_get("/klines", klines_handler)
+    app.router.add_get("/symbol-info", symbol_info_handler)
     assets_dir = WEB_DIR / "assets"
     if assets_dir.exists():  # absent until the first `npm run build`
         app.router.add_static("/assets/", assets_dir)
@@ -1178,7 +1281,7 @@ async def main_async() -> None:
                  binance_depth_poll(), binance_futures_depth_poll(), metrics_poll(),
                  liquidation_estimator_poll(),
                  flow_archive_loop(), retention_loop(), backfill_cvd(),
-                 trade_broadcast_loop(),
+                 trade_broadcast_loop(), coingecko_poll(),
                  positioning_poll(),
                  heat_ring_loop(), broadcast_depth_loop()):
         asyncio.create_task(task)

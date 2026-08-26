@@ -317,3 +317,39 @@ body { margin: 0; background: var(--bg); color: var(--text);
   .layout { grid-template-columns: 1fr; }
   .tape { display: none; }
 }
+
+/* ------------------------------------------------------- symbol info modal */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 100; display: flex;
+  align-items: center; justify-content: center; padding: 24px;
+  background: rgb(0 0 0 / 55%);
+}
+.modal {
+  width: min(720px, 100%); max-height: 86vh; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-card); padding: 18px 22px 22px;
+  box-shadow: 0 24px 60px rgb(0 0 0 / 50%);
+}
+.modal header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; margin-bottom: 6px;
+}
+.modal h2 { margin: 0; font-size: 18px; }
+.modal h2 span { font-size: 13px; font-weight: 400; margin-left: 8px; }
+.modal h3 {
+  margin: 18px 0 8px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--muted);
+  border-bottom: 1px solid var(--border); padding-bottom: 5px;
+}
+.modal h3 span { text-transform: none; letter-spacing: 0; font-size: 10px; }
+.stat-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px 18px;
+}
+.stat {
+  display: flex; flex-direction: column; gap: 1px;
+  font-variant-numeric: tabular-nums; font-size: 13px;
+}
+.stat .muted { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+.modal .small { font-size: 11px; line-height: 1.6; margin: 8px 0 0; }
+@media (max-width: 560px) { .modal { padding: 14px; } }

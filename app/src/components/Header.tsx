@@ -4,6 +4,7 @@ import {
   CHART_STYLES, NO_SECONDS, TIMEFRAMES, type ChartStyle, type Symbol,
 } from "../lib/config";
 import { useLensStore } from "../store/lens";
+import { SymbolInfoButton } from "./SymbolInfo";
 import { SymbolPicker } from "./SymbolPicker";
 
 /** Kept as pills beside the picker — the everyday watchlist. */
@@ -77,6 +78,7 @@ export function Header() {
           <option key={style} value={style}>{STYLE_LABELS[style]}</option>
         ))}
       </select>
+      <SymbolInfoButton />
       <Link className="mini-btn" to="/docs" title="Documentation">docs</Link>
       <span className={`status ${connection === "live" ? "live" : ""}`}>
         {STATUS_LABELS[connection]}

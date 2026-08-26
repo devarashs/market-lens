@@ -342,6 +342,19 @@ class LensStore:
             series.setdefault(metric, []).append([ts // 1000, round(value, 2)])
         return series
 
+    def liquidation_totals(self, symbol: str, since_ms: int) -> dict[str, float]:
+        """Forced-liquidation notional since `since_ms`, split by the side
+        that DIED — the facts layer's own summary for the info panel."""
+        rows = self.connection.execute(
+            "SELECT side, SUM(notional_usd) FROM liquidations"
+            " WHERE symbol = ? AND ts >= ? GROUP BY side",
+            (symbol, since_ms),
+        ).fetchall()
+        totals = {"long": 0.0, "short": 0.0}
+        for side, total in rows:
+            totals[side] = total or 0.0
+        return totals
+
     def counts(self) -> dict[str, int]:
         return {
             table: self.connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
