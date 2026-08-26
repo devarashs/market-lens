@@ -11,6 +11,7 @@ import { Header } from "../components/Header";
 import { MetricsBar } from "../components/MetricsBar";
 import { Readout } from "../components/Readout";
 import { SignalsBar } from "../components/SignalsBar";
+import { BookPanel } from "../components/BookPanel";
 import { TapePanel } from "../components/TapePanel";
 import { LensChart } from "../chart/LensChart";
 import {
@@ -81,6 +82,7 @@ export function LensPage() {
           <LensChart />
           <ChartFooter />
         </section>
+        <BookPanel />
         <TapePanel />
       </main>
       <footer className="attribution muted">

@@ -151,7 +151,7 @@ body { margin: 0; background: var(--bg); color: var(--text);
 @media (max-width: 760px) { .docs-layout { grid-template-columns: 1fr; } }
 
 /* ------------------------------------------------------------ main layout */
-.layout { display: grid; grid-template-columns: 1fr 280px; flex: 1; min-height: 0; }
+.layout { display: grid; grid-template-columns: 1fr 290px 250px; flex: 1; min-height: 0; }
 .chart-wrap { position: relative; min-width: 0; background: var(--bg); }
 #chart { position: absolute; inset: 0 0 52px 0; }
 #under-overlay {
@@ -232,6 +232,11 @@ body { margin: 0; background: var(--bg); color: var(--text);
   padding: 6px 18px; border-top: 1px solid var(--border); font-size: 11px;
 }
 .attribution a { color: var(--accent); }
+/* Narrower screens shed columns right-to-left: tape first, then book. */
+@media (max-width: 1200px) {
+  .layout { grid-template-columns: 1fr 290px; }
+  .layout aside:last-of-type { display: none; }
+}
 @media (max-width: 860px) {
   .layout { grid-template-columns: 1fr; }
   .tape { display: none; }
