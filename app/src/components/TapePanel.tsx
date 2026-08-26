@@ -21,6 +21,12 @@ export function TapePanel() {
   // liqs carry venue "binance-fut", now a real listed venue.
   const venueOn = (venue: string) =>
     activeVenues === null || activeVenues.includes(venue);
+
+  // Row tint deepens with size: a 1x-threshold print sits at ~18% mix, a
+  // monster saturates toward 50% -- read the tape's weight by color alone.
+  const tint = (colorVar: string, magnitude: number) =>
+    `color-mix(in srgb, var(${colorVar}) ` +
+    `${Math.min(50, 12 + Math.sqrt(magnitude) * 9).toFixed(0)}%, transparent)`;
   const rows: TapeRow[] = [
     ...trades.filter((trade) => trade.notional >= threshold && venueOn(trade.venue))
       .map((trade): TapeRow => ({ kind: "trade", ts: trade.ts, trade })),
@@ -42,7 +48,10 @@ export function TapePanel() {
       <ul id="tape-list">
         {rows.map((row) => row.kind === "trade" ? (
           <li key={`t-${row.trade.ts}-${row.trade.price}-${row.trade.size}`}
-              className={row.trade.side}>
+              className={row.trade.side}
+              style={{ background: tint(
+                row.trade.side === "buy" ? "--bid" : "--ask",
+                row.trade.notional / threshold) }}>
             <span>{row.trade.side === "buy" ? "▲" : "▼"} ${formatUsd(row.trade.notional)}</span>
             <span className="px">
               {row.trade.price.toLocaleString()} · {row.trade.venue} · {formatUtcTime(row.trade.ts)}
@@ -50,7 +59,9 @@ export function TapePanel() {
           </li>
         ) : (
           <li key={`l-${row.liq.ts}-${row.liq.price}-${row.liq.size}`}
-              className={`liq-${row.liq.side}`}>
+              className={`liq-${row.liq.side}`}
+              style={{ background: tint(
+                `--color-liq-${row.liq.side}`, row.liq.notional / threshold) }}>
             <span>✕ ${formatUsd(row.liq.notional)} {row.liq.side} liq</span>
             <span className="px">
               {row.liq.price.toLocaleString()} · {row.liq.venue} · {formatUtcTime(row.liq.ts)}
