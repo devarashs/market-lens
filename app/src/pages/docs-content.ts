@@ -294,6 +294,79 @@ company's figure, which describes a different instrument on a different
 exchange.</p>`,
   },
   {
+    id: "liquidation-hunter",
+    title: "Liquidation Hunter layers",
+    body: `
+<p>Ten layers ported from a Pine indicator of that name, all switchable
+from the <b>Layers</b> menu, all <b>off by default</b> — turning them on
+at once is exactly how the original becomes unreadable. They answer one
+question: <i>where is the fuel, and is the market coiled or spent?</i></p>
+
+<h3 style="margin-top:14px">Where the fuel sits</h3>
+<p><b>Stop clusters</b> — shaded bands just beyond each confirmed swing
+high and low, one ATR-buffer deep. This is <i>not</i> the liquidation map.
+Liquidations are forced by an exchange at a leverage-determined price;
+these are voluntary stop orders a crowd parks just past an obvious level.
+Two different tanks of the same fuel. A band is dropped once price closes
+decisively through it — it has been spent. Read them as: <b>if price
+reaches here, there is a pocket of orders waiting to be triggered</b>,
+which is why price so often reaches exactly here and then does not
+continue.</p>
+<p><b>Round-number magnets</b> — dotted lines at the "nice" numbers around
+price, spaced a tenth of its magnitude ($1,000 rungs for BTC). Crowds put
+orders at round numbers; that is the whole claim.</p>
+<p><b>Volume nodes</b> — dashed orange lines at the heaviest-traded price
+levels in the lookback, brightest first. Where business was done before,
+business tends to be done again.</p>
+<p><b>Liq grid (anchor)</b> — the original's liquidation grid: fixed
+leverage-tier percentages off VWAP. Kept because it is what the indicator
+draws, but <b>read it next to our measured Liq map, not instead of it</b>.
+The grid assumes every open position was entered at the anchor, so it
+shows the same shape whether or not anyone is actually positioned there.
+The measured map is built from real open-interest changes at the price
+they happened.</p>
+
+<h3 style="margin-top:14px">What just happened</h3>
+<p><b>Stop sweeps</b> — a triangle where price pierced a cluster and then
+closed back outside it on a long wick. The story: stops were run, and the
+move did not hold. <b>Absorption</b> — diamonds on bars with heavy volume,
+a tiny body and a real range: someone sat on the flow and price went
+nowhere. <b>Exhaustion</b> — crosses at a fresh extreme where momentum is
+decelerating and RSI refuses to confirm.</p>
+
+<h3 style="margin-top:14px">What regime we are in</h3>
+<p><b>Squeeze</b> tints the chart when Bollinger width sits inside Keltner
+width — range has compressed and expansion is statistically overdue.
+Worth knowing this compares <i>close</i> dispersion against <i>range</i>,
+so wide wicks with pinned closes read as compressed. <b>Extreme
+deviation</b> tints red when price is more than 2.5σ from its own 50-bar
+mean: crowded positioning, which is the condition every cascade needs.</p>
+
+<h3 style="margin-top:14px">Where this port deliberately differs</h3>
+<p>Pine only has OHLCV, so three of the original's features are inferred
+from candle shape. We measure the real thing, and a faithful port would
+have been a downgrade dressed as fidelity:</p>
+<p>· its <b>volume profile</b> splits buy/sell by where each candle closed
+in its range; the <b>POC &amp; value area</b> layer here comes from real
+executed volume per price bin with the true aggressor side, across nine
+venues.<br>
+· its <b>cumulative delta</b> is a candle-position proxy; our <b>CVD</b>
+is real signed taker flow.<br>
+· its <b>liquidation grid</b> is described above.</p>
+
+<h3 style="margin-top:14px">And the part that matters most</h3>
+<p>These layers were <b>backtested as trading signals and failed</b>. Over
+ten symbols with the verdict read on unseen 2025–26 data, <b>1 of 16
+signal-and-hold combinations beat random entry</b> — fewer than chance
+would produce across sixteen tests. The headline "stop sweep" was the
+worst of them: negative at every horizon, trailing random by 5.9 points at
+a ten-day hold. Full ledger in the arena's research section.</p>
+<p>They are kept because <b>seeing where stops rest is useful</b>, the way
+seeing the order book is useful. What the evidence refuses is the leap
+from "this draws something real" to "this predicts the next move" — the
+leap every indicator invites and almost none earn.</p>`,
+  },
+  {
     id: "gauges",
     title: "Gauges: imbalance, pressure, spread",
     body: `
