@@ -85,6 +85,10 @@ interface LensState {
   setConnection(status: ConnectionStatus): void;
   setCandleRows(rows: Candle[]): void;
   setReadout(readout: ReadoutData | null): void;
+  /** Clear everything the socket streams — called on symbol switch and on
+      every socket (re)open, because after a reconnect the seed is the only
+      truth and stale rows would otherwise pin the tape (2026-08-26). */
+  resetStreams(): void;
 }
 
 export function currentThreshold(state: Pick<LensState, "symbol" | "thresholdMult">): number {
@@ -228,15 +232,20 @@ export const useLensStore = create<LensState>()(
       }
     },
 
+    resetStreams() {
+      set({ depth: null, heat: [], trades: [], liqs: [], liqMap: [],
+            cvd: [], readout: null });
+    },
+
     selectSymbol(symbol) {
       if (symbol === get().symbol) return;
+      get().resetStreams();
+      // Old-symbol candles and venue filter go too — a blank chart that
+      // fills is honest; stale BTC walls on an ETH chart are not.
       set({
         symbol,
         timeframe: legalTimeframe(symbol, get().timeframe),
-        // Everything below is the OLD symbol's data — a blank chart that
-        // fills is honest; stale BTC walls on an ETH chart are not.
-        depth: null, heat: [], trades: [], liqs: [], liqMap: [], cvd: [],
-        readout: null, activeVenues: null, candleRows: [],
+        activeVenues: null, candleRows: [],
       });
     },
 

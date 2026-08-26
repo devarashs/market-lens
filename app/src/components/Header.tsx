@@ -29,11 +29,14 @@ export function Header() {
       <nav id="symbols" aria-label="Symbols">
         {SYMBOLS.map((sym) => {
           const change = metrics[sym]?.change24h;
+          // Real anchors (via Link) so the browser's own right-click /
+          // middle-click / ctrl+click "open in new tab" works; left click
+          // still routes through the SPA.
           return (
-            <button
+            <Link
               key={sym}
+              to={`/${sym}/${timeframe}`}
               className={sym === symbol ? "active" : ""}
-              onClick={() => navigate(`/${sym}/${timeframe}`)}
             >
               {sym}{" "}
               {change !== undefined && (
@@ -41,7 +44,7 @@ export function Header() {
                   {change >= 0 ? "+" : ""}{change.toFixed(1)}%
                 </small>
               )}
-            </button>
+            </Link>
           );
         })}
       </nav>

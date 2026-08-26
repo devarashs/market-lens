@@ -11,6 +11,7 @@ export interface Candle {
 }
 
 export interface Trade {
+  symbol?: string; // present on wire messages; guards cross-symbol leaks
   ts: number; // epoch ms
   venue: string;
   side: "buy" | "sell";
@@ -68,6 +69,7 @@ export type MetricsMap = Record<string, SymbolMetrics>;
 
 /** A real forced liquidation; side = who DIED. */
 export interface LiqEvent {
+  symbol?: string;
   ts: number; // epoch ms
   venue: string;
   side: "long" | "short";

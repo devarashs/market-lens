@@ -21,6 +21,8 @@ export function TapePanel() {
   // liqs carry venue "binance-fut", now a real listed venue.
   const venueOn = (venue: string) =>
     activeVenues === null || activeVenues.includes(venue);
+  const symbolOn = (rowSymbol?: string) =>
+    rowSymbol === undefined || rowSymbol === symbol;
 
   // Row tint deepens with size: a 1x-threshold print sits at ~18% mix, a
   // monster saturates toward 50% -- read the tape's weight by color alone.
@@ -28,9 +30,11 @@ export function TapePanel() {
     `color-mix(in srgb, var(${colorVar}) ` +
     `${Math.min(50, 12 + Math.sqrt(magnitude) * 9).toFixed(0)}%, transparent)`;
   const rows: TapeRow[] = [
-    ...trades.filter((trade) => trade.notional >= threshold && venueOn(trade.venue))
+    ...trades.filter((trade) => trade.notional >= threshold && venueOn(trade.venue)
+        && symbolOn(trade.symbol))
       .map((trade): TapeRow => ({ kind: "trade", ts: trade.ts, trade })),
-    ...liqs.filter((liq) => liq.notional >= threshold && venueOn(liq.venue))
+    ...liqs.filter((liq) => liq.notional >= threshold && venueOn(liq.venue)
+        && symbolOn(liq.symbol))
       .map((liq): TapeRow => ({ kind: "liq", ts: liq.ts, liq })),
   ].sort((a, b) => a.ts - b.ts).slice(-MAX_TAPE_ROWS).reverse();
 

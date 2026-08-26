@@ -24,7 +24,12 @@ export function startConnection(): void {
   socket = new LensSocket(`${protocol}://${location.host}/ws`, {
     onMessage: (message) => useLensStore.getState().applyMessage(message),
     onStatus: (status) => useLensStore.getState().setConnection(status),
-    onOpen: sendSubscribe, // reconnect ⇒ resubscribe, never a silent drop
+    onOpen: () => {
+      // A (re)connect means the seed about to arrive is the only truth:
+      // drop whatever the previous connection left behind, then subscribe.
+      useLensStore.getState().resetStreams();
+      sendSubscribe();
+    },
   });
   socket.start();
   store.setConnection("connecting");

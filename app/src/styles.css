@@ -43,12 +43,13 @@ body { margin: 0; background: var(--bg); color: var(--text);
 }
 .top h1 { font-size: 16px; margin: 0; letter-spacing: 0.02em; }
 #symbols { display: flex; gap: 6px; }
-#symbols button {
+#symbols a {
   background: var(--surface); color: var(--text); border: 1px solid var(--border);
   border-radius: 999px; padding: 4px 14px; font: inherit; cursor: pointer;
+  text-decoration: none;
 }
-#symbols button:hover { border-color: var(--accent); }
-#symbols button.active { background: var(--accent); color: var(--bg); font-weight: 600; }
+#symbols a:hover { border-color: var(--accent); }
+#symbols a.active { background: var(--accent); color: var(--bg); font-weight: 600; }
 .status { margin-left: auto; color: var(--muted); font-size: 12px; }
 .status.live { color: var(--bid); }
 #timeframes { display: flex; gap: 4px; }
@@ -58,7 +59,7 @@ body { margin: 0; background: var(--bg); color: var(--text);
 }
 #timeframes button.active { color: var(--text); border-color: var(--border); background: var(--surface); }
 #timeframes button:disabled { opacity: 0.35; cursor: default; }
-#symbols button small { font-size: 10px; margin-left: 2px; }
+#symbols a small { font-size: 10px; margin-left: 2px; }
 
 .metrics {
   padding: 6px 18px; border-bottom: 1px solid var(--border); font-size: 12px;
