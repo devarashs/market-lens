@@ -184,17 +184,33 @@ async def okx_liquidation_adapter(on_liquidation) -> None:
     so the liquidation layer is fed from here. The Binance adapter stays
     connected in case it returns.
     """
-    inst_to_key = {f"{spec.okx}-SWAP": spec.key
-                   for spec in SYMBOLS.values() if spec.okx}
+    # One subscription already carries every swap's liquidations, so the
+    # filter costs nothing to widen: cover every coin we track, not just
+    # the five with a full OKX book mapping. Candidate instIds are checked
+    # against OKX's own instrument list, so nothing speculative gets in and
+    # every instrument kept has a real contract multiplier.
     while True:
         try:
-            multipliers = await _okx_contract_values(list(inst_to_key))
+            all_multipliers = await _okx_all_contract_values()
         except Exception as error:  # noqa: BLE001 — no data beats wrong sizes
             _log(f"okx-liq: contract values unavailable "
-                 f"({error.__class__.__name__}) — retrying in {RECONNECT_SECONDS}s")
+                 f"({error.__class__.__name__}: {error}) — retrying in "
+                 f"{RECONNECT_SECONDS}s")
             await asyncio.sleep(RECONNECT_SECONDS)
             continue
         break
+
+    inst_to_key: dict[str, str] = {}
+    for spec in SYMBOLS.values():
+        if spec.asset_class != "crypto":
+            continue  # the equity perps have no OKX swap
+        for candidate in filter(None, (f"{spec.okx}-SWAP" if spec.okx else None,
+                                       f"{spec.key}-USDT-SWAP")):
+            if candidate in all_multipliers:
+                inst_to_key[candidate] = spec.key
+                break
+    multipliers = {inst: all_multipliers[inst] for inst in inst_to_key}
+    _log(f"okx-liq: watching {len(inst_to_key)} instruments")
 
     while True:
         try:
@@ -404,6 +420,17 @@ async def okx_adapter(on_book, on_trade) -> None:
 
 
 OKX_INSTRUMENTS_URL = "https://www.okx.com/api/v5/public/instruments?instType=SWAP"
+
+
+async def _okx_all_contract_values() -> dict[str, float]:
+    """{instId: base units per contract} for every OKX swap."""
+    import aiohttp
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(OKX_INSTRUMENTS_URL, timeout=20) as response:
+            payload = await response.json()
+    return {row["instId"]: float(row["ctVal"]) * float(row.get("ctMult") or 1)
+            for row in payload.get("data", []) if row.get("ctVal")}
 
 
 async def _okx_contract_values(instruments: list[str]) -> dict[str, float]:
