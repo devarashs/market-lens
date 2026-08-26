@@ -5,13 +5,29 @@ nothing Done unverified).
 
 ## L0 — Record what cannot be re-bought *(agreed 2026-08-25)*
 
-- [~] Depth + big-trade recorder running inside the collector — started
+- [x] Depth + big-trade recorder running inside the collector — started
       with the MVP server (CSV); moved to SQLite (`data_recorded/lens.db`,
       `market_lens/store.py`, WAL, indexed on symbol+ts) 2026-08-25 so the
       seed query stays constant-time and the multi-day heatmap gets its
-      range reads. Needs 24/7 hosting (arena's VPS) to become a real archive
-- [ ] Move collector to the VPS alongside the arena's cycle; pick a
-      retention window there (`LensStore.prune_before` is the hook)
+      range reads.
+- [x] Collector on the VPS (2026-08-26) behind nginx + Let's Encrypt at
+      market-lens.runsudo.net, systemd unit, auto-deploy on push. It is a
+      real 24/7 archive now.
+- [x] Retention wired (2026-08-26). `prune_before` had existed for a day
+      and *never been called* — the database grew unbounded. Now a loop
+      applies a per-table policy: depth 14d, trades/flow/OI 90d, and
+      forced-liquidation prints **never** pruned (no venue sells that
+      history back).
+- [x] **Derived state survives restarts** (2026-08-26). The liq map, CVD
+      and volume profile were memory-only, so every deploy blanked them —
+      and the deploy cron restarts on every push. Now `oi_observations`
+      and `flow_minutes` archive the *inputs*, and startup replays them:
+      the estimator is a pure function of its observations, so the rebuilt
+      map is the same map.
+- [x] **All 51 symbols recorded**, watched or not (2026-08-26) — heatmap,
+      depth, flow and liq map. Book history cannot be backfilled, so
+      recording only what someone had open would leave exactly the gaps a
+      later study needs.
 
 ## L1 — Rich tool *(agreed 2026-08-25; feature sprint same day)*
 
@@ -46,8 +62,32 @@ nothing Done unverified).
       binance-fut (fapi REST + aggTrade), bybit-fut, okx-fut as distinct
       venues; nine books total, perp tapes dominate as expected.
       Remaining candidate: dYdX v4
-- [ ] Per-venue accumulators so the venue filter can reach profile / CVD /
-      pressure / heatmap too (today those aggregate at ingest)
+- [x] **51 symbols incl. equities** (2026-08-26): Hyperliquid builder dexes
+      (HIP-3) list perps on real-world assets as `dex:SYMBOL`. Only `xyz`
+      has real flow ($2.1B/24h vs $0 on most others, measured), so stocks,
+      indices and commodities all come from it; illiquid tickers (NFLX,
+      GME, ARM, ASML, VIX, DXY — all under $1.5M/24h there) left out
+      deliberately. Plus 16 more main-dex coins. Core/extended tier keeps
+      the cost flat. *Verified live: NVDA, GOLD trading with book + tape.*
+- [x] Searchable symbol picker (ticker or company name, grouped by asset
+      class, `/` to open, rows are real anchors) — the pill row does not
+      scale to 51. Registry drift guarded by a test that parses the TS.
+- [x] Live price in the tab title; TradingView-style candle-close
+      countdown on the chart.
+- [x] **OKX perp contract-size fix** (2026-08-26): swap `sz` is contracts,
+      not coins (BTC 0.01, ETH 0.1, DOGE 1000). okx-fut was 100x over on
+      BTC/BNB, 10x on ETH, 1000x under on DOGE — 63k phantom whale prints
+      and a fake wall in the depth aggregate. Archive repaired, backup
+      kept. Caught by a CVD calibration control reading 777x.
+- [ ] **Per-venue accumulators so the venue filter reaches profile / CVD /
+      pressure / heatmap** — Arash asked for the filter to apply
+      "wherever it can"; today it reaches the book (bids/asks/walls/
+      imbalance) and the client-side tape/dashes/sounds, but those four
+      aggregate at ingest and ignore it. **The oldest outstanding request
+      in this repo.**
+- [ ] Net long/short positioning line on the chart (Arash 2026-08-26) —
+      source not yet chosen: HL vault net positioning, Binance
+      long/short account ratios, or our own cumulative taker position
 - [ ] Symbol add/remove from the UI (config-only today)
 - [ ] Price alerts (browser notifications on level cross)
 
