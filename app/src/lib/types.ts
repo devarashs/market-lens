@@ -91,6 +91,9 @@ export type ServerMessage =
   | DepthMessage
   | ({ type: "trade"; symbol: string } & Trade)
   | { type: "tapeHistory"; symbol: string; trades: Trade[] }
+  // Batched prints: the collector coalesces a burst into one frame rather
+  // than one WebSocket message per trade.
+  | { type: "trades"; symbol: string; trades: Trade[] }
   | { type: "heat"; symbol: string; cols: HeatCol[] }
   | { type: "heatcol"; symbol: string; col: HeatCol }
   | { type: "cvd"; symbol: string; points: [number, number][] }

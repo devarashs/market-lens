@@ -261,6 +261,8 @@ class LensState:
             key: SymbolAccumulators(spec.price_bin) for key, spec in SYMBOLS.items()
         }
         self.metrics: dict[str, dict] = {}
+        # Forwarded prints awaiting their next broadcast tick.
+        self.pending_trades: dict[str, list[dict]] = {key: [] for key in SYMBOLS}
 
     def on_book(self, venue: str, symbol: str, book: dict) -> None:
         self.books[(symbol, venue)] = book
@@ -277,10 +279,17 @@ class LensState:
         self.accumulators[symbol].recent_trades.append(payload)
         if trade["notional"] >= threshold:
             STORE.insert_trade(symbol, venue, trade)
-        message = fastjson.dumps_str({"type": "trade", **payload})
-        for ws, sub in list(self.clients.items()):
-            if sub["symbol"] == symbol and not ws.closed:
-                asyncio.ensure_future(ws.send_str(message))
+        # Queue rather than send: `trade_broadcast_loop` coalesces a burst
+        # into one message, and — because it checks for subscribers first
+        # — never serialises a payload for a symbol nobody is watching.
+        # With 51 symbols that was most of the work being thrown away.
+        self.pending_trades[symbol].append(payload)
+
+    def drain_pending_trades(self) -> dict[str, list[dict]]:
+        drained = {symbol: batch for symbol, batch in self.pending_trades.items() if batch}
+        for symbol in drained:
+            self.pending_trades[symbol] = []
+        return drained
 
     def on_liquidation(self, venue: str, symbol: str, liq: dict) -> None:
         """A real forced liquidation: archive it (facts the estimator will
@@ -694,6 +703,34 @@ async def _push_positioning() -> None:
                 "type": "positioning", "symbol": symbol,
                 "series": STORE.positioning_series(symbol, start_ms)})
         await ws.send_str(cache[symbol])
+
+
+TRADE_BROADCAST_SECONDS = 0.1
+
+
+async def trade_broadcast_loop() -> None:
+    """Push queued prints ~10x a second, one message per symbol.
+
+    Sending per print meant a WebSocket frame, a JSON serialisation and a
+    task spawn for every trade, and a React render on the client for each
+    one. Coalescing costs at most 100ms of latency on a panel that reads
+    as a stream anyway, and lets the client apply a whole burst in a
+    single frame.
+    """
+    while True:
+        await asyncio.sleep(TRADE_BROADCAST_SECONDS)
+        drained = STATE.drain_pending_trades()
+        if not drained:
+            continue
+        watching = {sub["symbol"] for ws, sub in STATE.clients.items() if not ws.closed}
+        for symbol, batch in drained.items():
+            if symbol not in watching:
+                continue  # nobody is looking: never pay for the JSON
+            message = fastjson.dumps_str({"type": "trades", "symbol": symbol,
+                                          "trades": batch})
+            for ws, sub in list(STATE.clients.items()):
+                if sub["symbol"] == symbol and not ws.closed:
+                    await ws.send_str(message)
 
 
 async def flow_archive_loop() -> None:
@@ -1141,6 +1178,7 @@ async def main_async() -> None:
                  binance_depth_poll(), binance_futures_depth_poll(), metrics_poll(),
                  liquidation_estimator_poll(),
                  flow_archive_loop(), retention_loop(), backfill_cvd(),
+                 trade_broadcast_loop(),
                  positioning_poll(),
                  heat_ring_loop(), broadcast_depth_loop()):
         asyncio.create_task(task)

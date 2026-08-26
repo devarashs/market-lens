@@ -154,6 +154,11 @@ body { margin: 0; background: var(--bg); color: var(--text);
 /* ------------------------------------------------------------ main layout */
 .layout { display: grid; grid-template-columns: 1fr 290px 250px; flex: 1; min-height: 0; }
 .chart-wrap {
+  /* `relative` is load-bearing: the candle countdown is absolutely
+     positioned against this box. Dropping it when this became a flex
+     column sent the countdown to the top-right of the PAGE, over the
+     header, where it no longer read as belonging to the chart. */
+  position: relative;
   display: flex; flex-direction: column; min-width: 0; background: var(--bg);
 }
 .chart-area { position: relative; flex: 1; min-height: 0; }
@@ -212,13 +217,16 @@ body { margin: 0; background: var(--bg); color: var(--text);
 .candle-countdown {
   /* Above #overlay (z-index 3), pinned over the chart's top-right where
      the price axis has no labels — the TradingView bar-close countdown. */
-  position: absolute; top: 8px; right: 10px; z-index: 4;
-  display: flex; align-items: baseline; gap: 6px;
-  padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px;
+  position: absolute; top: 10px; right: 12px; z-index: 4;
+  display: flex; align-items: baseline; gap: 7px;
+  padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px;
   background: color-mix(in srgb, var(--surface) 88%, transparent);
   font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none;
 }
-.candle-countdown b { color: var(--text); font-weight: 600; letter-spacing: 0.02em; }
+.candle-countdown b {
+  color: var(--text); font-weight: 650; font-size: 13px;
+  letter-spacing: 0.02em;
+}
 .candle-countdown.closing b { color: var(--color-gold); }
 
 .chart-footer {
@@ -278,6 +286,17 @@ body { margin: 0; background: var(--bg); color: var(--text);
 #tape-list li {
   display: flex; justify-content: space-between; gap: 8px;
   padding: 4px 6px; border-radius: 6px; margin-bottom: 2px;
+}
+/* New prints ease in rather than snapping into place. Only genuinely new
+   rows mount (each row is memoised on a stable id), so this animates
+   arrivals and never the whole list. */
+#tape-list li.tape-row { animation: tape-in 220ms ease-out; }
+@keyframes tape-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #tape-list li.tape-row { animation: none; }
 }
 #tape-list li.buy  { background: color-mix(in srgb, var(--bid) 14%, transparent); }
 #tape-list li.sell { background: color-mix(in srgb, var(--ask) 14%, transparent); }

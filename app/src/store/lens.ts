@@ -16,13 +16,15 @@ import {
   type Symbol,
   type Timeframe,
 } from "../lib/config";
+import {
+  appendCapped, asLiqItem, asTradeItem, type LiqItem, type TradeItem,
+} from "../lib/tape";
 import type {
   Candle,
   ConnectionStatus,
   DepthMessage,
   HeatCol,
   LiqBand,
-  LiqEvent,
   MetricsMap,
   PositioningSeries,
   ServerMessage,
@@ -61,8 +63,8 @@ interface LensState {
   connection: ConnectionStatus;
   depth: DepthMessage | null;
   heat: HeatCol[];
-  trades: Trade[];
-  liqs: LiqEvent[];
+  trades: TradeItem[];
+  liqs: LiqItem[];
   liqMap: LiqBand[];
   cvd: [number, number][];
   positioning: PositioningSeries;
@@ -152,6 +154,46 @@ function savePrefs(state: LensState): void {
   }
 }
 
+// ------------------------------------------------------- trade buffering
+// Prints arrive in clumps. Applying each one to the store meant one React
+// render per print; buffering to the next animation frame makes a burst
+// cost a single render, and a hidden tab (where rAF is paused) simply
+// applies its backlog in one go when it comes back rather than replaying
+// hundreds of renders.
+const MAX_LIQS = 500;
+let pending: Trade[] = [];
+let flushHandle: number | null = null;
+
+function flushTrades(): void {
+  flushHandle = null;
+  const batch = pending;
+  pending = [];
+  if (batch.length === 0) return;
+  const state = useLensStore.getState();
+  const fresh = batch.map(asTradeItem);
+  useLensStore.setState({
+    trades: appendCapped(state.trades, fresh, MAX_TRADES),
+  });
+  // Sounds follow the same gates as the tape: you hear what you would see.
+  if (!state.beepEnabled) return;
+  const threshold = currentThreshold(state);
+  for (const trade of batch) {
+    const venueOn = state.activeVenues === null
+      || state.activeVenues.includes(trade.venue);
+    if (venueOn && trade.notional >= threshold) {
+      playSound(soundParams(trade.side, trade.notional / threshold));
+    }
+  }
+}
+
+function bufferTrade(trade: Trade): void {
+  pending.push(trade);
+  if (flushHandle !== null) return;
+  flushHandle = typeof requestAnimationFrame === "function"
+    ? requestAnimationFrame(flushTrades)
+    : (setTimeout(flushTrades, 16) as unknown as number);
+}
+
 // ----------------------------------------------------------------- store
 
 const stored = loadPrefs();
@@ -192,23 +234,15 @@ export const useLensStore = create<LensState>()(
         case "depth":
           set({ depth: message });
           break;
-        case "trade": {
-          const state = get();
-          const trades = [...state.trades, message];
-          if (trades.length > MAX_TRADES) trades.shift();
-          set({ trades });
-          // Same gates as the tape list: you hear what you would see —
-          // threshold AND the venue filter.
-          const threshold = currentThreshold(state);
-          const venueOn = state.activeVenues === null
-            || state.activeVenues.includes(message.venue);
-          if (state.beepEnabled && venueOn && message.notional >= threshold) {
-            playSound(soundParams(message.side, message.notional / threshold));
-          }
+        case "trade":
+          bufferTrade(message);
           break;
-        }
+        case "trades":
+          // Batched by the server: a burst arrives as one message.
+          for (const trade of message.trades ?? []) bufferTrade(trade);
+          break;
         case "tapeHistory":
-          set({ trades: message.trades ?? [] });
+          set({ trades: (message.trades ?? []).map(asTradeItem) });
           break;
         case "heat":
           set({ heat: message.cols });
@@ -224,9 +258,7 @@ export const useLensStore = create<LensState>()(
           break;
         case "liq": {
           const state = get();
-          const liqs = [...state.liqs, message];
-          if (liqs.length > 500) liqs.shift();
-          set({ liqs });
+          set({ liqs: appendCapped(state.liqs, [asLiqItem(message)], MAX_LIQS) });
           const threshold = currentThreshold(state);
           if (state.beepEnabled && message.notional >= threshold) {
             playSound(liquidationParams(message.side, message.notional / threshold));
@@ -234,7 +266,7 @@ export const useLensStore = create<LensState>()(
           break;
         }
         case "liqHistory":
-          set({ liqs: message.events ?? [] });
+          set({ liqs: (message.events ?? []).map(asLiqItem) });
           break;
         case "liqmap":
           set({ liqMap: message.bands ?? [] });
@@ -246,6 +278,7 @@ export const useLensStore = create<LensState>()(
     },
 
     resetStreams() {
+      pending = [];
       set({ depth: null, heat: [], trades: [], liqs: [], liqMap: [],
             cvd: [], positioning: {}, readout: null });
     },

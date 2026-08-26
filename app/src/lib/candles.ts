@@ -85,3 +85,28 @@ export function mergeCandles(existing: Candle[], incoming: Candle[]): Candle[] {
   for (const row of incoming) byTime.set(row.time, row);
   return [...byTime.values()].sort((a, b) => a.time - b.time);
 }
+
+/** Snap a time series onto the chart's bar boundaries, last value per bar.
+
+    Lightweight Charts gives every series a slot on ONE shared time axis,
+    so a line carrying minute-resolution points puts a slot on the axis
+    for every minute — and on an hourly chart the candles get pushed apart
+    to make room for them, which reads as huge gaps between candles
+    (Arash, 2026-08-27, after CVD grew to 14 days and the positioning line
+    landed). Bucketing to the displayed interval keeps every series on the
+    candles' own timestamps, so the axis has exactly one slot per bar.
+
+    `points` must be time-ascending, which both CVD and positioning are. */
+export function bucketSeries(
+  points: readonly (readonly [number, number])[], bucketSeconds: number,
+): { time: number; value: number }[] {
+  if (bucketSeconds <= 1) return points.map(([time, value]) => ({ time, value }));
+  const out: { time: number; value: number }[] = [];
+  for (const [ts, value] of points) {
+    const bucket = Math.floor(ts / bucketSeconds) * bucketSeconds;
+    const last = out[out.length - 1];
+    if (last !== undefined && last.time === bucket) last.value = value;
+    else out.push({ time: bucket, value });
+  }
+  return out;
+}

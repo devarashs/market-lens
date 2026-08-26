@@ -20,8 +20,8 @@ import {
 } from "lightweight-charts";
 import { useEffect, useRef } from "react";
 
-import { COLORS, MA_DEFS, type ChartStyle } from "../lib/config";
-import { computeMa, mergeCandles, styledRows } from "../lib/candles";
+import { COLORS, MA_DEFS, TF_SECONDS, type ChartStyle } from "../lib/config";
+import { bucketSeries, computeMa, mergeCandles, styledRows } from "../lib/candles";
 import { pickPositioningMetric } from "../lib/positioning";
 import type { Candle } from "../lib/types";
 import { currentThreshold, useLensStore, type ReadoutData } from "../store/lens";
@@ -119,12 +119,25 @@ export function LensChart() {
       scaleMargins: { top: 0.82, bottom: 0 }, visible: false,
     });
 
+    /* Both of these are bucketed to the displayed bar interval. They
+       carry minute-resolution history, and Lightweight Charts shares ONE
+       time axis across series: raw minutes put a slot on the axis per
+       minute, so an hourly chart spread its candles apart to make room
+       and showed enormous gaps between them. */
+    function applyCvd(): void {
+      const state = store.getState();
+      const bucket = TF_SECONDS[state.timeframe];
+      cvdSeries.setData(bucketSeries(state.cvd, bucket)
+        .map((p) => ({ time: p.time as UTCTimestamp, value: p.value })));
+    }
+
     function applyPositioning(): void {
       const state = store.getState();
       const metric = pickPositioningMetric(state.positioning, state.positioningMetric);
       const points = metric ? state.positioning[metric] ?? [] : [];
-      positioningSeries.setData(
-        points.map(([t, v]) => ({ time: t as UTCTimestamp, value: v })));
+      const bucket = TF_SECONDS[state.timeframe];
+      positioningSeries.setData(bucketSeries(points, bucket)
+        .map((p) => ({ time: p.time as UTCTimestamp, value: p.value })));
       positioningSeries.applyOptions({
         visible: state.layers.positioning && points.length > 0,
       });
@@ -360,9 +373,8 @@ export function LensChart() {
     const unsubscribers = [
       store.subscribe((s) => s.candleRows, () => { applyPriceData(); markDirty(); }),
       store.subscribe((s) => s.chartStyle, rebuildPriceSeries),
-      store.subscribe((s) => s.cvd, (points) => {
-        cvdSeries.setData(points.map(([t, v]) => ({ time: t as UTCTimestamp, value: v })));
-      }),
+      store.subscribe((s) => s.cvd, applyCvd),
+      store.subscribe((s) => s.timeframe, () => { applyCvd(); applyPositioning(); }),
       store.subscribe((s) => s.layers.candles, (on) => priceSeries.applyOptions({ visible: on })),
       store.subscribe((s) => s.layers.cvd, (on) => cvdSeries.applyOptions({ visible: on })),
       store.subscribe((s) => s.positioning, applyPositioning),
@@ -395,6 +407,7 @@ export function LensChart() {
     ];
 
     cvdSeries.applyOptions({ visible: store.getState().layers.cvd });
+    applyCvd();
     applyPositioning();
     applyPriceData();
     loadDayLevels();

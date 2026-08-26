@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { computeEma, computeSma, mergeCandles, styledRows, toHeikinAshi } from "./candles";
+import { computeEma, computeSma, mergeCandles, styledRows, toHeikinAshi, bucketSeries } from "./candles";
 import type { Candle } from "./types";
 
 function candle(time: number, open: number, high: number, low: number, close: number): Candle {
@@ -111,5 +111,36 @@ describe("mergeCandles", () => {
   it("handles empty sides", () => {
     expect(mergeCandles([], [bar(1, 1)])).toHaveLength(1);
     expect(mergeCandles([bar(1, 1)], [])).toHaveLength(1);
+  });
+});
+
+describe("bucketSeries", () => {
+  it("collapses a minute series onto hourly bars, last value winning", () => {
+    const points: [number, number][] = [
+      [3_540, 1], [3_600, 2], [3_660, 3], [7_200, 4],
+    ];
+    expect(bucketSeries(points, 3_600)).toEqual([
+      { time: 0, value: 1 },       // 3540 falls in the 0..3599 bar
+      { time: 3_600, value: 3 },   // 3600 and 3660 collapse, last wins
+      { time: 7_200, value: 4 },
+    ]);
+  });
+
+  it("puts every point on a bar boundary, so the axis gains no slots", () => {
+    const points: [number, number][] = Array.from(
+      { length: 500 }, (_, i) => [i * 60, i]);
+    const bucketed = bucketSeries(points, 3_600);
+    expect(bucketed.every((p) => p.time % 3_600 === 0)).toBe(true);
+    expect(bucketed.length).toBeLessThan(points.length / 50);
+  });
+
+  it("passes a one-second chart through untouched", () => {
+    const points: [number, number][] = [[1, 5], [2, 6]];
+    expect(bucketSeries(points, 1)).toEqual([
+      { time: 1, value: 5 }, { time: 2, value: 6 }]);
+  });
+
+  it("handles an empty series", () => {
+    expect(bucketSeries([], 3_600)).toEqual([]);
   });
 });

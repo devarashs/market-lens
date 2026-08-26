@@ -1,11 +1,37 @@
+import { memo, useMemo } from "react";
+
 import { MAX_TAPE_ROWS } from "../lib/config";
-import { formatUsd, formatUtcTime } from "../lib/format";
-import type { LiqEvent, Trade } from "../lib/types";
+import { formatUsd } from "../lib/format";
+import { tintPercent, visibleRows, type TapeRow } from "../lib/tape";
 import { currentThreshold, useLensStore } from "../store/lens";
 
-type TapeRow =
-  | { kind: "trade"; ts: number; trade: Trade }
-  | { kind: "liq"; ts: number; liq: LiqEvent };
+/** One printed row. Memoised on identity: a new print re-renders itself
+    and nothing else, because every row's id is stable for its lifetime.
+    The displayed strings were rendered once, when the print arrived. */
+const Row = memo(function Row({ row, magnitude }: {
+  row: TapeRow; magnitude: number;
+}) {
+  const { item } = row;
+  const percent = tintPercent(magnitude).toFixed(0);
+  const colorVar = row.kind === "trade"
+    ? (item.side === "buy" ? "--bid" : "--ask")
+    : `--color-liq-${item.side}`;
+  return (
+    <li
+      className={`tape-row ${row.kind === "trade" ? item.side : `liq-${item.side}`}`}
+      style={{ background: `color-mix(in srgb, var(${colorVar}) ${percent}%, transparent)` }}
+    >
+      <span>
+        {row.kind === "trade"
+          ? `${item.side === "buy" ? "▲" : "▼"} $${item.usdText}`
+          : `✕ $${item.usdText} ${item.side} liq`}
+      </span>
+      <span className="px">
+        {item.priceText} · {item.venue} · {item.timeText}
+      </span>
+    </li>
+  );
+});
 
 export function TapePanel() {
   const trades = useLensStore((s) => s.trades);
@@ -16,27 +42,12 @@ export function TapePanel() {
   const setThresholdMult = useLensStore((s) => s.setThresholdMult);
   const threshold = currentThreshold({ symbol, thresholdMult });
 
-  // One column, both kinds (aggr.trade-style): trades and forced
-  // liquidations interleaved by time, same threshold and venue gates —
-  // liqs carry venue "binance-fut", now a real listed venue.
-  const venueOn = (venue: string) =>
-    activeVenues === null || activeVenues.includes(venue);
-  const symbolOn = (rowSymbol?: string) =>
-    rowSymbol === undefined || rowSymbol === symbol;
-
-  // Row tint deepens with size: a 1x-threshold print sits at ~18% mix, a
-  // monster saturates toward 50% -- read the tape's weight by color alone.
-  const tint = (colorVar: string, magnitude: number) =>
-    `color-mix(in srgb, var(${colorVar}) ` +
-    `${Math.min(50, 12 + Math.sqrt(magnitude) * 9).toFixed(0)}%, transparent)`;
-  const rows: TapeRow[] = [
-    ...trades.filter((trade) => trade.notional >= threshold && venueOn(trade.venue)
-        && symbolOn(trade.symbol))
-      .map((trade): TapeRow => ({ kind: "trade", ts: trade.ts, trade })),
-    ...liqs.filter((liq) => liq.notional >= threshold && venueOn(liq.venue)
-        && symbolOn(liq.symbol))
-      .map((liq): TapeRow => ({ kind: "liq", ts: liq.ts, liq })),
-  ].sort((a, b) => a.ts - b.ts).slice(-MAX_TAPE_ROWS).reverse();
+  // Recomputed only when something it reads changes — not on every render
+  // of a parent, and not once per arriving print.
+  const rows = useMemo(
+    () => visibleRows(trades, liqs, threshold, activeVenues, symbol, MAX_TAPE_ROWS),
+    [trades, liqs, threshold, activeVenues, symbol],
+  );
 
   return (
     <aside className="tape" aria-label="Trade flow panel">
@@ -50,27 +61,8 @@ export function TapePanel() {
         onChange={(event) => setThresholdMult(parseFloat(event.target.value))}
       />
       <ul id="tape-list">
-        {rows.map((row) => row.kind === "trade" ? (
-          <li key={`t-${row.trade.ts}-${row.trade.price}-${row.trade.size}`}
-              className={row.trade.side}
-              style={{ background: tint(
-                row.trade.side === "buy" ? "--bid" : "--ask",
-                row.trade.notional / threshold) }}>
-            <span>{row.trade.side === "buy" ? "▲" : "▼"} ${formatUsd(row.trade.notional)}</span>
-            <span className="px">
-              {row.trade.price.toLocaleString()} · {row.trade.venue} · {formatUtcTime(row.trade.ts)}
-            </span>
-          </li>
-        ) : (
-          <li key={`l-${row.liq.ts}-${row.liq.price}-${row.liq.size}`}
-              className={`liq-${row.liq.side}`}
-              style={{ background: tint(
-                `--color-liq-${row.liq.side}`, row.liq.notional / threshold) }}>
-            <span>✕ ${formatUsd(row.liq.notional)} {row.liq.side} liq</span>
-            <span className="px">
-              {row.liq.price.toLocaleString()} · {row.liq.venue} · {formatUtcTime(row.liq.ts)}
-            </span>
-          </li>
+        {rows.map((row) => (
+          <Row key={row.item.id} row={row} magnitude={row.item.notional / threshold} />
         ))}
       </ul>
     </aside>
