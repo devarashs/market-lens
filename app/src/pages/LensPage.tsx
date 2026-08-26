@@ -17,8 +17,21 @@ import { LensChart } from "../chart/LensChart";
 import {
   SYMBOLS, TIMEFRAMES, type Symbol, type Timeframe,
 } from "../lib/config";
+import { formatPrice } from "../lib/format";
 import { useCandlePolling } from "../lib/useCandlePolling";
 import { legalTimeframe, useLensStore } from "../store/lens";
+
+/** Tab title: "<price> · <symbol> — Market Lens", price first so a narrow
+    tab still shows it. Preference order: aggregate mid from the 1Hz depth
+    push, else the metrics last-price (covers every symbol, so a fresh
+    symbol switch shows a price before its first depth frame arrives). */
+function updateTitle(): void {
+  const state = useLensStore.getState();
+  const price = state.depth?.mid ?? state.metrics[state.symbol]?.last;
+  document.title = price != null
+    ? `${formatPrice(price)} · ${state.symbol} — Market Lens`
+    : `${state.symbol} ${state.timeframe} — Market Lens`;
+}
 
 function parseRoute(symbolParam?: string, timeframeParam?: string) {
   const symbol = SYMBOLS.includes(symbolParam as Symbol)
@@ -44,8 +57,22 @@ export function LensPage() {
     const store = useLensStore.getState();
     store.selectSymbol(symbol);
     store.setTimeframe(timeframe);
-    document.title = `${symbol} ${timeframe} — Market Lens`;
   }, [symbolParam, timeframeParam, navigate]);
+
+  // Live tab title. Driven by store subscriptions — the 1Hz depth push —
+  // and NOT a timer: background tabs throttle timers to a crawl but still
+  // deliver WebSocket messages, and a background tab is exactly where a
+  // title price matters.
+  useEffect(() => {
+    const unsubs = [
+      useLensStore.subscribe((s) => s.depth, updateTitle),
+      useLensStore.subscribe((s) => s.metrics, updateTitle),
+      useLensStore.subscribe((s) => s.symbol, updateTitle),
+      useLensStore.subscribe((s) => s.timeframe, updateTitle),
+    ];
+    updateTitle();
+    return () => unsubs.forEach((unsub) => unsub());
+  }, []);
 
   // Keyboard shortcuts: 1–6 symbols, [ ] timeframe, h/p layer toggles.
   useEffect(() => {
