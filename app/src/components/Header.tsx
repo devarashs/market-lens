@@ -1,9 +1,13 @@
 import { Link, useNavigate } from "react-router-dom";
 
 import {
-  CHART_STYLES, NO_SECONDS, SYMBOLS, TIMEFRAMES, type ChartStyle,
+  CHART_STYLES, NO_SECONDS, TIMEFRAMES, type ChartStyle, type Symbol,
 } from "../lib/config";
 import { useLensStore } from "../store/lens";
+import { SymbolPicker } from "./SymbolPicker";
+
+/** Kept as pills beside the picker — the everyday watchlist. */
+const QUICK_SYMBOLS: readonly Symbol[] = ["BTC", "ETH", "SOL", "HYPE", "NVDA", "GOLD"];
 
 const STYLE_LABELS: Record<ChartStyle, string> = {
   candles: "Candles", heikin: "Heikin-Ashi", bars: "Bars", line: "Line", area: "Area",
@@ -26,8 +30,11 @@ export function Header() {
   return (
     <header className="top">
       <h1>Market Lens</h1>
-      <nav id="symbols" aria-label="Symbols">
-        {SYMBOLS.map((sym) => {
+      <SymbolPicker />
+      {/* The core symbols stay one click away: the picker scales to 50
+          symbols, but these are the ones actually watched all day. */}
+      <nav id="symbols" aria-label="Quick symbols">
+        {QUICK_SYMBOLS.map((sym) => {
           const change = metrics[sym]?.change24h;
           // Real anchors (via Link) so the browser's own right-click /
           // middle-click / ctrl+click "open in new tab" works; left click

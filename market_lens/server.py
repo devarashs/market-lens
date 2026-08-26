@@ -47,6 +47,8 @@ from market_lens.config import (
     DEPTH_BROADCAST_SECONDS,
     DEPTH_RECORD_SECONDS,
     HTTP_PORT,
+    CORE_SYMBOLS,
+    HL_DEXES,
     HYPERLIQUID_REST,
     RECORD_DIR,
     RETENTION_DAYS,
@@ -282,6 +284,8 @@ async def metrics_poll() -> None:
     """Funding / next funding / open interest / 24h change, every 30s."""
     binance_symbols = {spec.binance.upper(): spec.key
                        for spec in SYMBOLS.values() if spec.binance}
+    hl_coin_to_spec = {spec.hyperliquid: spec
+                       for spec in SYMBOLS.values() if spec.hyperliquid}
     async with ClientSession() as session:
         while True:
             metrics: dict[str, dict] = {key: {} for key in SYMBOLS}
@@ -304,43 +308,40 @@ async def metrics_poll() -> None:
                         if key:
                             metrics[key]["funding"] = float(row["lastFundingRate"])
                             metrics[key]["nextFunding"] = int(row["nextFundingTime"])
-                async with session.post(
-                    f"{HYPERLIQUID_REST}/info", json={"type": "metaAndAssetCtxs"},
-                    timeout=10,
-                ) as response:
-                    meta, contexts = await response.json()
+                # One request per Hyperliquid dex — the main perp dex plus
+                # each builder dex our symbols live on (equities and
+                # commodities are namespaced `xyz:NVDA` and are absent from
+                # the main universe).
+                for dex in (None, *HL_DEXES):
+                    body = {"type": "metaAndAssetCtxs"}
+                    if dex:
+                        body["dex"] = dex
+                    async with session.post(f"{HYPERLIQUID_REST}/info", json=body,
+                                            timeout=10) as response:
+                        meta, contexts = await response.json()
                     for asset, context in zip(meta["universe"], contexts):
-                        for spec in SYMBOLS.values():
-                            if spec.hyperliquid == asset["name"]:
-                                entry = metrics[spec.key]
-                                entry.setdefault("last", float(context.get("markPx", 0)))
-                                entry["oiUsd"] = round(
-                                    float(context.get("openInterest", 0))
-                                    * float(context.get("markPx", 0)), 0)
-                                # Kept separately from the Binance rate: the
-                                # venue funding SPREAD is itself a signal.
-                                entry["fundingHl"] = float(context.get("funding", 0))
-                                entry.setdefault("funding", float(context.get("funding", 0)))
-                                # HL funding settles hourly.
-                                entry.setdefault("nextFunding",
-                                                 (int(time.time() // 3600) + 1) * 3600 * 1000)
-                                if spec.binance is None:
-                                    async with session.post(
-                                        f"{HYPERLIQUID_REST}/info",
-                                        json={"type": "candleSnapshot",
-                                              "req": {"coin": spec.hyperliquid,
-                                                      "interval": "1d",
-                                                      "startTime": int(time.time() * 1000)
-                                                      - 2 * 86_400_000}},
-                                        timeout=10,
-                                    ) as candles:
-                                        rows = await candles.json()
-                                        if rows:
-                                            day = rows[-1]
-                                            open_price = float(day["o"])
-                                            if open_price:
-                                                entry["change24h"] = round(
-                                                    (float(day["c"]) / open_price - 1) * 100, 2)
+                        spec = hl_coin_to_spec.get(asset["name"])
+                        if spec is None:
+                            continue
+                        entry = metrics[spec.key]
+                        mark = float(context.get("markPx") or 0)
+                        entry.setdefault("last", mark)
+                        entry["oiUsd"] = round(
+                            float(context.get("openInterest") or 0) * mark, 0)
+                        # Kept separately from the Binance rate: the venue
+                        # funding SPREAD is itself a signal.
+                        entry["fundingHl"] = float(context.get("funding") or 0)
+                        entry.setdefault("funding", float(context.get("funding") or 0))
+                        # HL funding settles hourly.
+                        entry.setdefault("nextFunding",
+                                         (int(time.time() // 3600) + 1) * 3600 * 1000)
+                        # prevDayPx is in the context already. This used to
+                        # cost a candleSnapshot request per HL-only symbol,
+                        # which at 38 of them would have been 38 extra REST
+                        # calls every poll for a number sitting right here.
+                        previous = float(context.get("prevDayPx") or 0)
+                        if spec.binance is None and previous:
+                            entry["change24h"] = round((mark / previous - 1) * 100, 2)
                 STATE.metrics = metrics
                 message = fastjson.dumps_str({"type": "metrics", "data": metrics})
                 for ws in list(STATE.clients):
@@ -424,12 +425,32 @@ async def retention_loop() -> None:
         await asyncio.sleep(RETENTION_SWEEP_SECONDS)
 
 
+def watched_symbols() -> set[str]:
+    """Symbols at least one connected client is currently looking at."""
+    return {sub["symbol"] for ws, sub in STATE.clients.items() if not ws.closed}
+
+
+def book_work_symbols() -> set[str]:
+    """Symbols worth spending book aggregation on this tick.
+
+    Core symbols always — their heat ring and depth archive are the
+    history we are building and must not have holes. Everything else only
+    while someone is watching: with 40+ symbols configured, doing this
+    unconditionally would multiply the collector's idle cost by the symbol
+    count for data nobody is looking at and no one is recording.
+    """
+    return set(CORE_SYMBOLS) | watched_symbols()
+
+
 async def heat_ring_loop() -> None:
-    """Append one binned-book column per symbol every 10s (the live heatmap)."""
+    """Append one binned-book column every 10s (the live heatmap), for the
+    symbols that need it."""
     while True:
         await asyncio.sleep(HEAT_INTERVAL_SECONDS)
         now_s = int(time.time())
-        for symbol, spec in SYMBOLS.items():
+        active = book_work_symbols()
+        for symbol in active:
+            spec = SYMBOLS[symbol]
             books = STATE.books_for(symbol, None)
             if not books:
                 continue
@@ -452,7 +473,10 @@ async def broadcast_depth_loop() -> None:
         for ws, sub in STATE.clients.items():
             venue_key = tuple(sorted(sub["venues"])) if sub["venues"] else None
             wanted[(sub["symbol"], venue_key, sub.get("bin_mult", 1.0))].append(ws)
-        record_due = {s for s in SYMBOLS
+        # Only CORE symbols are archived: the depth table is the multi-day
+        # heatmap's history, and paying ~1 MB/day per symbol for 40 of them
+        # to record books nobody has ever opened is not a trade worth making.
+        record_due = {s for s in CORE_SYMBOLS
                       if time.time() - last_recorded.get(s, 0) >= DEPTH_RECORD_SECONDS}
         for symbol in record_due:
             books = STATE.books_for(symbol, None)
