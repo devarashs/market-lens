@@ -408,10 +408,14 @@ export function LensChart() {
   }, []);
 
   return (
-    <>
+    // The chart and its two overlay planes fill this box; the footer is a
+    // sibling that sizes itself. The planes used to be inset by a
+    // hard-coded footer height, which meant every control added to the
+    // footer either overlapped it or silently ate chart space.
+    <div className="chart-area">
       <canvas ref={underRef} id="under-overlay" />
       <div ref={containerRef} id="chart" />
       <canvas ref={overRef} id="overlay" />
-    </>
+    </div>
   );
 }
