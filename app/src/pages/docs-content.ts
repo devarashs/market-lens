@@ -50,12 +50,34 @@ proxied to the collector).</p>`,
     id: "symbols-routing",
     title: "Symbols, routing & URLs",
     body: `
-<p>Symbols: BTC, ETH, SOL, BNB, DOGE, HYPE — switch with the header pills or
-keys <b>1–6</b>. Each pill shows the symbol's 24h change.</p>
-<p>Every view has a URL: <code>/BTC/1m</code>, <code>/SOL/15m</code>… —
+<p>51 symbols in four groups — <b>crypto</b>, <b>stocks</b>, <b>indices</b>
+and <b>commodities</b>. Open the picker in the header (or press <b>/</b>)
+and search by ticker or company name: "nvidia", "hynix", "micro" all
+find their symbol. Arrow keys and enter select; every row is a real link,
+so middle-click still opens a tab. Six pills stay in the header for the
+everyday watchlist, and keys <b>1–9</b> jump to the first nine.</p>
+<p><b>Where the stocks come from.</b> Hyperliquid's builder dexes (HIP-3)
+list perps on real-world assets, namespaced <code>dex:SYMBOL</code> —
+<code>xyz:NVDA</code> is a perp on Nvidia, traded on-chain. Of the ten
+deployed dexes only <code>xyz</code> has real flow ($2.1B/24h against
+literally $0 on several others, measured 2026-08-26), so every equity,
+index and commodity here comes from it. Tickers you might expect but
+will not find — NFLX, GME, ARM, ASML, VIX, DXY — trade under $1.5M/day
+there and were left out on purpose: an empty book is worse than a
+missing symbol. Worth knowing that the flow is not US-centric: SK Hynix
+and SanDisk both out-trade NVDA on this venue.</p>
+<p><b>Core vs extended.</b> The six original crypto symbols are
+<i>core</i>: every venue's book, the deep Binance poll, a continuously
+maintained heat ring, and depth archiving. The other 45 are
+Hyperliquid-only and do their book work while you are watching them.
+That split is what let the symbol count grow eightfold without the
+collector's idle cost following it — and why the 24h change on a stock
+comes from Hyperliquid's own mark, not from Binance.</p>
+<p>Every view has a URL: <code>/BTC/1m</code>, <code>/NVDA/15m</code>… —
 bookmarkable, shareable, and browser back/forward work. Adding a symbol is a
 one-line change in <code>market_lens/config.py</code> (venue names, price
-bin, big-trade threshold) plus its mirror in <code>app/src/lib/config.ts</code>.</p>`,
+bin, big-trade threshold) plus its mirror in <code>app/src/lib/config.ts</code>;
+a test parses the TypeScript and fails if the two ever disagree.</p>`,
   },
   {
     id: "charting",
