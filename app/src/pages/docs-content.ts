@@ -79,8 +79,16 @@ edge: green bids below, red asks above, at their price levels. Bar length
 scales with the <b>square root</b> of resting notional (USD), so a 100×
 larger wall reads ~10× longer — whales stay visible without flattening
 everything else.</p>
-<p>Books from all enabled venues are summed per price bin (bin sizes are
-per-symbol, e.g. $10 for BTC). Notional (price × size) is the unit
+<p>The side panel carries a DOM-style <b>orderbook ladder</b>: asks
+stacked above, bids below, each row showing level size, cumulative size,
+and price, with a depth bar scaled by cumulative share; the middle row is
+the last trade price (colored by aggressor) and the aggregated spread.
+The <b>grp selector is the price-compression control</b> — books are
+summed per price bin (per-symbol base, e.g. $10 BTC / $0.05 SOL), and grp
+multiplies that bin from ×0.2 (exchange tick size) to ×10, re-binned
+server-side per client and remembered per symbol. Fine grouping shows the
+book's true texture; coarse grouping shows the big shelves.</p>
+<p>Notional (price × size) is the unit
 everywhere, so venues and symbols are directly comparable. Binance
 contributes a 1000-level book via REST polling (~5s refresh — depth beyond
 top-of-book is worth a little staleness); Bybit and OKX maintain live

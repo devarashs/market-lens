@@ -66,6 +66,7 @@ interface LensState {
   metrics: MetricsMap;
   candleRows: Candle[];
   activeVenues: string[] | null; // null = all venues
+  binMults: Record<string, number>; // per-symbol price-grouping multiplier
   layers: LayerFlags;
   maVisible: Record<string, boolean>;
   beepEnabled: boolean;
@@ -77,6 +78,7 @@ interface LensState {
   setChartStyle(style: ChartStyle): void;
   setThresholdMult(mult: number): void;
   setActiveVenues(venues: string[] | null): void;
+  setBinMult(symbol: Symbol, mult: number): void;
   setLayer(layer: keyof LayerFlags, on: boolean): void;
   setMaVisible(id: string, on: boolean): void;
   setBeepEnabled(on: boolean): void;
@@ -102,6 +104,7 @@ const PREFS_KEY = "lens-prefs-v2";
 interface StoredPrefs {
   chartStyle: ChartStyle;
   thresholdMult: number;
+  binMults: Record<string, number>;
   layers: LayerFlags;
   maVisible: Record<string, boolean>;
   beepEnabled: boolean;
@@ -125,6 +128,7 @@ function savePrefs(state: LensState): void {
   const prefs: StoredPrefs = {
     chartStyle: state.chartStyle,
     thresholdMult: state.thresholdMult,
+    binMults: state.binMults,
     layers: state.layers,
     maVisible: state.maVisible,
     beepEnabled: state.beepEnabled,
@@ -156,6 +160,7 @@ export const useLensStore = create<LensState>()(
     metrics: {},
     candleRows: [],
     activeVenues: null,
+    binMults: stored.binMults ?? {},
     layers: { ...DEFAULT_LAYERS, ...stored.layers },
     maVisible: Object.fromEntries(
       MA_DEFS.map((def) => [def.id, stored.maVisible?.[def.id] ?? false]),
@@ -249,6 +254,10 @@ export const useLensStore = create<LensState>()(
     },
     setActiveVenues(venues) {
       set({ activeVenues: venues });
+    },
+    setBinMult(symbol, mult) {
+      set({ binMults: { ...get().binMults, [symbol]: mult } });
+      savePrefs(get());
     },
     setLayer(layer, on) {
       set({ layers: { ...get().layers, [layer]: on } });

@@ -1,4 +1,5 @@
 import { MAX_TAPE_ROWS } from "../lib/config";
+import { OrderBook } from "./OrderBook";
 import { formatUsd, formatUtcTime } from "../lib/format";
 import type { LiqEvent, Trade } from "../lib/types";
 import { currentThreshold, useLensStore } from "../store/lens";
@@ -65,6 +66,7 @@ export function TapePanel() {
 
   return (
     <aside className="tape" aria-label="Market structure panel">
+      <OrderBook />
       <h2>Top walls <span className="muted">(resting, aggregated)</span></h2>
       <WallsTable />
       <h2>Big trades <span className="muted">≥ ${formatUsd(threshold)}</span></h2>

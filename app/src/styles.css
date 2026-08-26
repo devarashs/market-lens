@@ -190,6 +190,33 @@ body { margin: 0; background: var(--bg); color: var(--text);
   background: var(--surface);
 }
 .tape h2 { font-size: 13px; margin: 0 0 10px; }
+/* ------------------------------------------------------- orderbook ladder */
+.ladder { font-size: 11px; font-variant-numeric: tabular-nums; margin-bottom: 14px; }
+.ladder-row {
+  position: relative; display: grid;
+  grid-template-columns: 1fr 1fr auto; gap: 6px;
+  padding: 1px 6px; line-height: 1.5;
+}
+.ladder-row i {
+  /* cumulative-depth bar behind the row, anchored to the price side */
+  position: absolute; top: 0; bottom: 0; right: 0; z-index: 0;
+  pointer-events: none;
+}
+.ladder-row.bid i { background: color-mix(in srgb, var(--bid) 16%, transparent); }
+.ladder-row.ask i { background: color-mix(in srgb, var(--ask) 16%, transparent); }
+.ladder-row span { position: relative; z-index: 1; }
+.ladder-row .sz { color: var(--muted); }
+.ladder-row .cum { text-align: right; color: var(--text); opacity: 0.75; }
+.ladder-row .px { text-align: right; min-width: 64px; }
+.ladder-row.bid .px { color: var(--bid); }
+.ladder-row.ask .px { color: var(--ask); }
+.ladder-mid {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 5px 6px; margin: 2px 0;
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+}
+.ladder-mid b { font-size: 16px; }
+.ladder select { margin-left: 6px; }
 #tape-list { list-style: none; margin: 0; padding: 0; font-size: 12px; }
 #tape-list li {
   display: flex; justify-content: space-between; gap: 8px;

@@ -388,7 +388,7 @@ async def broadcast_depth_loop() -> None:
         wanted: dict[tuple, list[web.WebSocketResponse]] = defaultdict(list)
         for ws, sub in STATE.clients.items():
             venue_key = tuple(sorted(sub["venues"])) if sub["venues"] else None
-            wanted[(sub["symbol"], venue_key)].append(ws)
+            wanted[(sub["symbol"], venue_key, sub.get("bin_mult", 1.0))].append(ws)
         record_due = {s for s in SYMBOLS
                       if time.time() - last_recorded.get(s, 0) >= DEPTH_RECORD_SECONDS}
         for symbol in record_due:
@@ -400,20 +400,21 @@ async def broadcast_depth_loop() -> None:
                     aggregate_books(books, spec.price_bin, DEPTH_BINS_PER_SIDE))
                 last_recorded[symbol] = time.time()
 
-        for (symbol, venue_key), sockets in wanted.items():
+        for (symbol, venue_key, bin_mult), sockets in wanted.items():
             venues = list(venue_key) if venue_key else None
             venue_books = STATE.venue_books_for(symbol, venues)
             if not venue_books:
                 continue
             spec = SYMBOLS[symbol]
+            effective_bin = round(spec.price_bin * bin_mult, 10)
             books = [book for _, book in venue_books]
-            profile = aggregate_books(books, spec.price_bin, DEPTH_BINS_PER_SIDE)
+            profile = aggregate_books(books, effective_bin, DEPTH_BINS_PER_SIDE)
             accumulator = STATE.accumulators[symbol]
 
             # Per-venue attribution for the wall rows ("who is quoting it"),
             # and per-venue best bid/ask for the divergence gauge.
             venue_bins = {
-                venue: aggregate_books([book], spec.price_bin, DEPTH_BINS_PER_SIDE)
+                venue: aggregate_books([book], effective_bin, DEPTH_BINS_PER_SIDE)
                 for venue, book in venue_books
             }
             walls = top_walls(profile)
@@ -440,12 +441,12 @@ async def broadcast_depth_loop() -> None:
             tape = tape_signal(list(accumulator.pressure), spec.big_trade_usd,
                                accumulator.cvd_minutes)
             book = book_signal(imbalance, attributed_walls, profile["mid"],
-                               list(accumulator.heat), spec.price_bin)
+                               list(accumulator.heat), effective_bin)
             message = json.dumps({
                 "type": "depth", "symbol": symbol,
                 "venues": STATE.venues_for(symbol),
                 "activeVenues": venues or STATE.venues_for(symbol),
-                "bin": spec.price_bin,
+                "bin": effective_bin,
                 **profile,
                 "imbalance": imbalance,
                 "walls": attributed_walls,
@@ -561,9 +562,19 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                 continue
             if command.get("cmd") == "subscribe" and command.get("symbol") in SYMBOLS:
                 venues = command.get("venues")
+                # Price-grouping control ("compression"): a multiplier on
+                # the symbol's base bin, from a fixed set so a client can't
+                # request a million bins. 0.2x reaches exchange tick size.
+                try:
+                    bin_mult = float(command.get("binMult", 1.0))
+                except (TypeError, ValueError):
+                    bin_mult = 1.0
+                if bin_mult not in (0.2, 0.5, 1.0, 2.0, 5.0, 10.0):
+                    bin_mult = 1.0
                 STATE.clients[ws] = {
                     "symbol": command["symbol"],
                     "venues": venues if isinstance(venues, list) and venues else None,
+                    "bin_mult": bin_mult,
                 }
                 await send_symbol_seed(ws, command["symbol"])
     finally:
