@@ -7,7 +7,8 @@ import { describe, expect, it } from "vitest";
 
 import type { DepthMessage, HeatCol, Trade } from "../lib/types";
 import {
-  drawBubbles, drawDepth, drawProfile, drawWallLines, wallStartTime, type DrawEnv,
+  drawBubbles, drawDepth, drawProfile, drawWallLines, groupTradeMarks,
+  wallStartTime, MAX_TRADE_LABELS, type DrawEnv,
 } from "./overlays";
 
 interface Rect { x: number; y: number; w: number; h: number; style: string }
@@ -89,19 +90,91 @@ describe("drawBubbles", () => {
   });
 
   it("filters below-threshold trades and snaps time to the bucket", () => {
-    const { env, over } = makeEnv();
+    const { env, under } = makeEnv();
     drawBubbles(env, [trade(50_000), trade(200_000, 501_500)], 100_000, "1m");
-    expect(over.rects).toHaveLength(1);
-    // 501.5s snapped down to the 480s minute bucket.
-    expect(over.rects[0].x).toBeCloseTo(480);
+    expect(under.rects).toHaveLength(1);
+    // 501.5s snapped down to the 480s bucket, then offset half a slot
+    // (60s wide here) so the dash sits beside the candle, not through it.
+    expect(under.rects[0].x).toBeCloseTo(510);
   });
 
-  it("labels only monsters (≥5× threshold)", () => {
-    const { env, over } = makeEnv();
-    drawBubbles(env, [trade(200_000), trade(600_000)], 100_000, "1m");
-    expect(over.rects).toHaveLength(2);
+  it("draws dashes UNDER the candles and labels over them", () => {
+    // The contract behind the change: a candle is always painted on top
+    // of its prints, so heavy flow can never hide price.
+    const { env, under, over } = makeEnv();
+    drawBubbles(env, [trade(600_000)], 100_000, "1m");
+    expect(under.rects).toHaveLength(1);
+    expect(over.rects).toHaveLength(0);
     expect(over.labels).toHaveLength(1);
-    expect(over.labels[0].text).toBe("$600K");
+  });
+
+  it("merges prints sharing a bucket and price into one sized mark", () => {
+    const { env, under } = makeEnv();
+    const many = Array.from({ length: 40 }, () => trade(200_000));
+    drawBubbles(env, many, 100_000, "1m");
+    // Forty overlapping bars were what buried the candles; now it is one.
+    expect(under.rects).toHaveLength(1);
+  });
+
+  it("keeps separate prices apart", () => {
+    const { env, under } = makeEnv();
+    drawBubbles(env, [
+      { ...trade(200_000), price: 150 },
+      { ...trade(200_000), price: 120 },
+    ], 100_000, "1m");
+    expect(under.rects).toHaveLength(2);
+  });
+
+  it("takes the dominant side when a level has both", () => {
+    const { env, under } = makeEnv();
+    drawBubbles(env, [
+      { ...trade(200_000), side: "buy" as const },
+      { ...trade(900_000), side: "sell" as const },
+    ], 100_000, "1m");
+    expect(under.rects).toHaveLength(1);
+    expect(under.rects[0].style).toContain("196,86,74"); // sell red wins
+  });
+
+  it("labels only monsters, and caps how many", () => {
+    const { env, over } = makeEnv();
+    const monsters = Array.from({ length: 12 }, (_, index) => ({
+      ...trade(600_000 + index * 10_000),
+      price: 110 + index * 5, // distinct prices so they do not merge
+    }));
+    drawBubbles(env, [...monsters, trade(200_000, 800_000)], 100_000, "1m");
+    expect(over.labels).toHaveLength(MAX_TRADE_LABELS);
+    // Largest first: the biggest monster is labelled, the 2x print is not.
+    expect(over.labels[0].text).toBe("$710K");
+  });
+});
+
+describe("groupTradeMarks", () => {
+  it("sums notional and reports the dominant side", () => {
+    const [mark] = groupTradeMarks([
+      { x: 100, y: 200, usd: 30_000, side: "buy" },
+      { x: 100, y: 201, usd: 50_000, side: "buy" },
+      { x: 100, y: 202, usd: 10_000, side: "sell" },
+    ]);
+    expect(mark.usd).toBe(90_000);
+    expect(mark.side).toBe("buy");
+  });
+
+  it("separates marks further apart than the bin", () => {
+    expect(groupTradeMarks([
+      { x: 100, y: 200, usd: 1, side: "buy" },
+      { x: 100, y: 260, usd: 1, side: "buy" },
+    ])).toHaveLength(2);
+  });
+
+  it("separates marks in different time buckets at the same price", () => {
+    expect(groupTradeMarks([
+      { x: 100, y: 200, usd: 1, side: "buy" },
+      { x: 400, y: 200, usd: 1, side: "buy" },
+    ])).toHaveLength(2);
+  });
+
+  it("handles an empty list", () => {
+    expect(groupTradeMarks([])).toEqual([]);
   });
 });
 

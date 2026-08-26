@@ -173,26 +173,89 @@ export function drawLiqPrints(
     opposite visual class from the heat lines: long+faint = resting
     claims, short+bright = executed facts. Labels only for monsters (≥5×
     the threshold). */
+export interface TradeMark {
+  x: number;
+  y: number;
+  usd: number;
+  side: "buy" | "sell";
+}
+
+/** How many $-labels a frame may draw, largest first. Every qualifying
+    print carrying its own label is what turned the chart into a wall of
+    text (Arash, 2026-08-26). */
+export const MAX_TRADE_LABELS = 5;
+/** Prints landing within this many pixels vertically, in the same time
+    bucket, merge into one mark. */
+export const TRADE_MARK_BIN_PX = 5;
+
+/** Merge prints that would draw on top of each other into one mark whose
+    size is their combined notional, keeping whichever side dominates.
+
+    Fifty prints at one level used to draw fifty overlapping bars, which
+    is what buried the candles — a solid slab that said "lots happened
+    here" far less clearly than one correctly-sized mark does. */
+export function groupTradeMarks(
+  entries: TradeMark[], binPx: number = TRADE_MARK_BIN_PX,
+): TradeMark[] {
+  const groups = new Map<string, { x: number; y: number; buy: number; sell: number }>();
+  for (const entry of entries) {
+    const row = Math.round(entry.y / binPx);
+    const key = `${Math.round(entry.x)}|${row}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = { x: entry.x, y: row * binPx, buy: 0, sell: 0 };
+      groups.set(key, group);
+    }
+    if (entry.side === "buy") group.buy += entry.usd;
+    else group.sell += entry.usd;
+  }
+  return [...groups.values()].map((group) => ({
+    x: group.x,
+    y: group.y,
+    usd: group.buy + group.sell,
+    side: group.buy >= group.sell ? "buy" : "sell",
+  }));
+}
+
+/** Big prints as horizontal dashes at their price.
+
+    Two deliberate choices, both from candles becoming invisible behind
+    them: the dashes paint on the UNDER plane so a candle is always drawn
+    on top of them — the same split drawWallLines uses — and they start
+    half a bar-slot to the right, so the mark sits beside its candle
+    rather than through it. Labels stay on the over plane, capped. */
 export function drawBubbles(
   env: DrawEnv, trades: Trade[], threshold: number, timeframe: Timeframe,
 ): void {
   const bucket = TF_SECONDS[timeframe];
+  const entries: TradeMark[] = [];
   for (const trade of trades) {
     if (trade.notional < threshold) continue;
     const snapped = Math.floor(trade.ts / 1000 / bucket) * bucket;
     const x1 = env.timeToX(snapped);
     const y = env.priceToY(trade.price);
     if (x1 === null || y === null || y < 0 || y > env.height) continue;
-    const magnitude = trade.notional / threshold;
-    const length = Math.min(90, 10 + Math.sqrt(magnitude) * 16);
-    const thickness = Math.min(5, 1 + Math.sqrt(magnitude) * 1.2);
-    const alpha = Math.min(0.9, 0.45 + Math.sqrt(magnitude) * 0.25);
-    const rgb = trade.side === "buy" ? COLORS.bidRgb : COLORS.askRgb;
-    env.over.fillStyle = `rgba(${rgb},${alpha.toFixed(2)})`;
-    env.over.fillRect(x1, y - thickness / 2, length, thickness);
-    if (magnitude >= 5) {
-      env.over.font = "10px sans-serif";
-      env.over.fillText("$" + formatUsd(trade.notional), x1 + length + 4, y + 3);
-    }
+    // Offset into the right half of the bar's slot: clear of the candle
+    // body, still unambiguously that candle's print.
+    const nextX = env.timeToX(snapped + bucket);
+    const slot = nextX !== null && nextX > x1 ? nextX - x1 : 8;
+    entries.push({ x: x1 + slot * 0.5, y, usd: trade.notional, side: trade.side });
   }
+
+  const marks = groupTradeMarks(entries);
+  marks.sort((a, b) => b.usd - a.usd);
+  env.over.font = "10px sans-serif";
+  marks.forEach((mark, index) => {
+    const magnitude = mark.usd / threshold;
+    const length = Math.min(90, 10 + Math.sqrt(magnitude) * 16);
+    const thickness = Math.min(4, 1 + Math.sqrt(magnitude));
+    const alpha = Math.min(0.8, 0.4 + Math.sqrt(magnitude) * 0.2);
+    const rgb = mark.side === "buy" ? COLORS.bidRgb : COLORS.askRgb;
+    env.under.fillStyle = `rgba(${rgb},${alpha.toFixed(2)})`;
+    env.under.fillRect(mark.x, mark.y - thickness / 2, length, thickness);
+    if (index < MAX_TRADE_LABELS && magnitude >= 5) {
+      env.over.fillStyle = `rgba(${rgb},0.95)`;
+      env.over.fillText("$" + formatUsd(mark.usd), mark.x + length + 4, mark.y + 3);
+    }
+  });
 }

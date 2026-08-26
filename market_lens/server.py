@@ -384,28 +384,40 @@ LIQ_POLL_SECONDS = 30
 
 
 async def liquidation_estimator_poll() -> None:
-    """Feed each symbol's estimator a futures-OI observation every 30s;
-    push the refreshed estimated bands to that symbol's subscribers.
-    HL-only symbols have no Binance futures OI and simply never build a
-    map — shown honestly as an empty layer."""
-    futures_symbols = {spec.key: spec.binance.upper()
+    """Feed every symbol's estimator an open-interest observation every 30s
+    and push the refreshed bands to that symbol's subscribers.
+
+    Every symbol, not just the Binance-listed ones: Hyperliquid publishes
+    open interest for each of its coins — the equity perps included — and
+    the metrics poll already has it in hand, so the wider coverage costs
+    no extra requests at all. Binance futures OI is still preferred where
+    it exists, being the deeper book; each symbol stays on one basis.
+    """
+    binance_symbols = {spec.key: spec.binance.upper()
                        for spec in SYMBOLS.values() if spec.binance}
     async with ClientSession() as session:
         while True:
-            for key, symbol in futures_symbols.items():
+            for key in SYMBOLS:
                 accumulator = STATE.accumulators[key]
                 price = accumulator.last_price
                 if price is None:
                     continue
-                try:
-                    async with session.get(
-                        "https://fapi.binance.com/fapi/v1/openInterest",
-                        params={"symbol": symbol}, timeout=10,
-                    ) as response:
-                        data = await response.json()
-                    oi_usd = float(data["openInterest"]) * price
-                except Exception:  # noqa: BLE001 — poll is best-effort
-                    continue
+                binance_symbol = binance_symbols.get(key)
+                if binance_symbol:
+                    try:
+                        async with session.get(
+                            "https://fapi.binance.com/fapi/v1/openInterest",
+                            params={"symbol": binance_symbol}, timeout=10,
+                        ) as response:
+                            data = await response.json()
+                        oi_usd = float(data["openInterest"]) * price
+                    except Exception:  # noqa: BLE001 — poll is best-effort
+                        continue
+                else:
+                    # Hyperliquid's own OI, already fetched by metrics_poll.
+                    oi_usd = float(STATE.metrics.get(key, {}).get("oiUsd") or 0)
+                    if oi_usd <= 0:
+                        continue
                 now = time.time()
                 taker_delta = sum(
                     (n if side == "buy" else -n)
@@ -509,7 +521,11 @@ async def _backfill_cvd_once() -> None:
                     overlap_minutes += 1
             if (overlap_minutes >= CVD_CALIBRATION_MIN_MINUTES
                     and overlap_theirs > 0):
-                scale = min(20.0, max(0.2, overlap_ours / overlap_theirs))
+                # Ceiling well above a real venue ratio: nine venues (four
+                # of them perp) against Binance spot alone measures ~10-20x,
+                # so 60 leaves headroom while still catching the kind of
+                # garbage the okx-fut contract bug produced (777x).
+                scale = min(60.0, max(0.2, overlap_ours / overlap_theirs))
                 note = f"x{scale:.2f} from {overlap_minutes}m overlap"
             else:
                 scale = 1.0
@@ -583,31 +599,21 @@ async def retention_loop() -> None:
         await asyncio.sleep(RETENTION_SWEEP_SECONDS)
 
 
-def watched_symbols() -> set[str]:
-    """Symbols at least one connected client is currently looking at."""
-    return {sub["symbol"] for ws, sub in STATE.clients.items() if not ws.closed}
-
-
-def book_work_symbols() -> set[str]:
-    """Symbols worth spending book aggregation on this tick.
-
-    Core symbols always — their heat ring and depth archive are the
-    history we are building and must not have holes. Everything else only
-    while someone is watching: with 40+ symbols configured, doing this
-    unconditionally would multiply the collector's idle cost by the symbol
-    count for data nobody is looking at and no one is recording.
-    """
-    return set(CORE_SYMBOLS) | watched_symbols()
-
-
 async def heat_ring_loop() -> None:
-    """Append one binned-book column every 10s (the live heatmap), for the
-    symbols that need it."""
+    """Append one binned-book column per symbol every 10s (the live heatmap).
+
+    EVERY symbol, watched or not. Heatmap history cannot be recorded
+    retroactively — a symbol whose ring only fills while someone happens
+    to be looking at it would show up empty exactly when you open it,
+    which is the moment you want it (Arash, 2026-08-26). The cost is
+    asymmetric in our favour: an extended symbol aggregates one ~20-level
+    Hyperliquid book, while the six core symbols aggregate nine books
+    apiece — the expensive ones were always going to run anyway.
+    """
     while True:
         await asyncio.sleep(HEAT_INTERVAL_SECONDS)
         now_s = int(time.time())
-        active = book_work_symbols()
-        for symbol in active:
+        for symbol in SYMBOLS:
             spec = SYMBOLS[symbol]
             books = STATE.books_for(symbol, None)
             if not books:
@@ -631,10 +637,12 @@ async def broadcast_depth_loop() -> None:
         for ws, sub in STATE.clients.items():
             venue_key = tuple(sorted(sub["venues"])) if sub["venues"] else None
             wanted[(sub["symbol"], venue_key, sub.get("bin_mult", 1.0))].append(ws)
-        # Only CORE symbols are archived: the depth table is the multi-day
-        # heatmap's history, and paying ~1 MB/day per symbol for 40 of them
-        # to record books nobody has ever opened is not a trade worth making.
-        record_due = {s for s in CORE_SYMBOLS
+        # Every symbol is archived. Order-book history has no free source
+        # and cannot be backfilled, so recording only what someone happened
+        # to be watching would leave exactly the gaps a later study needs.
+        # Retention (14 days for depth) is what bounds the disk, not
+        # selective recording.
+        record_due = {s for s in SYMBOLS
                       if time.time() - last_recorded.get(s, 0) >= DEPTH_RECORD_SECONDS}
         for symbol in record_due:
             books = STATE.books_for(symbol, None)
