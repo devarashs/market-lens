@@ -96,6 +96,23 @@ CREATE TABLE IF NOT EXISTS flow_minutes (
     sell_usd  REAL    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_flow_symbol_ts ON flow_minutes (symbol, ts);
+
+-- Net long/short positioning per source (see market_lens/positioning.py).
+-- Binance serves only ~30 days of its long/short history and Bitfinex a
+-- rolling week, so this is another record-it-or-lose-it series. Long and
+-- short are stored raw — shares for the ratio sources, base-unit position
+-- sizes for the margin one — and normalised on read, so the archive keeps
+-- what was actually published.
+CREATE TABLE IF NOT EXISTS positioning (
+    ts          INTEGER NOT NULL,  -- epoch ms
+    symbol      TEXT    NOT NULL,
+    metric      TEXT    NOT NULL,  -- 'top-positions', 'bitfinex-margin', …
+    long_value  REAL    NOT NULL,
+    short_value REAL    NOT NULL,
+    PRIMARY KEY (symbol, metric, ts)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS idx_pos_symbol_metric_ts
+    ON positioning (symbol, metric, ts);
 """
 
 # Columns added after the table first shipped. SQLite's CREATE TABLE IF NOT
@@ -112,7 +129,7 @@ _MIGRATIONS = (
 # this, so a new table joins retention by construction rather than by
 # somebody remembering to add it twice.
 _TABLES = ("trades", "depth_snapshots", "liquidations", "oi_observations",
-           "flow_minutes")
+           "flow_minutes", "positioning")
 
 
 class LensStore:
@@ -214,6 +231,26 @@ class LensStore:
         )
         self.connection.commit()
 
+    def insert_positioning(self, symbol: str, metric: str, points) -> int:
+        """Upsert positioning points. Re-fetching an overlapping window is
+        the normal case (both APIs serve a trailing window), so the primary
+        key absorbs repeats instead of duplicating them."""
+        rows = [(point.ts_ms, symbol, metric, point.long_value, point.short_value)
+                for point in points]
+        if not rows:
+            return 0
+        before = self.connection.execute(
+            "SELECT COUNT(*) FROM positioning WHERE symbol = ? AND metric = ?",
+            (symbol, metric)).fetchone()[0]
+        self.connection.executemany(
+            "INSERT OR REPLACE INTO positioning (ts, symbol, metric, long_value,"
+            " short_value) VALUES (?, ?, ?, ?, ?)", rows)
+        self.connection.commit()
+        after = self.connection.execute(
+            "SELECT COUNT(*) FROM positioning WHERE symbol = ? AND metric = ?",
+            (symbol, metric)).fetchone()[0]
+        return after - before
+
     # -------------------------------------------------------------- reads
 
     def recent_liquidations(self, symbol: str, limit: int) -> list[dict]:
@@ -290,6 +327,20 @@ class LensStore:
             params.extend(venues)
         sql += " GROUP BY 1 ORDER BY 1"
         return self.connection.execute(sql, params).fetchall()
+
+    def positioning_series(self, symbol: str, start_ms: int) -> dict[str, list]:
+        """{metric: [[ts_seconds, net_pct], …]} for the chart, oldest first."""
+        rows = self.connection.execute(
+            "SELECT metric, ts, long_value, short_value FROM positioning"
+            " WHERE symbol = ? AND ts >= ? ORDER BY ts",
+            (symbol, start_ms),
+        ).fetchall()
+        series: dict[str, list] = {}
+        for metric, ts, long_value, short_value in rows:
+            total = long_value + short_value
+            value = 0.0 if total <= 0 else (long_value - short_value) / total * 100
+            series.setdefault(metric, []).append([ts // 1000, round(value, 2)])
+        return series
 
     def counts(self) -> dict[str, int]:
         return {

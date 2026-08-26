@@ -57,6 +57,14 @@ from market_lens.config import (
     WEB_DIR,
 )
 from market_lens.liqmap import LiquidationEstimator
+from market_lens.positioning import (
+    BINANCE_FUTURES_DATA,
+    BINANCE_METRICS,
+    BITFINEX_PAIRS,
+    BITFINEX_STATS,
+    parse_binance_ratio,
+    parse_bitfinex_sizes,
+)
 from market_lens.store import LensStore
 from market_lens.venues import (
     binance_adapter,
@@ -618,6 +626,76 @@ async def _fetch_klines_range(session, symbol: str, start_ms: int,
     return rows
 
 
+POSITIONING_POLL_SECONDS = 300
+POSITIONING_HISTORY_DAYS = 30
+POSITIONING_MAX_POINTS = 1500
+
+
+async def positioning_poll() -> None:
+    """Record net long/short positioning, then push it to subscribers.
+
+    Both sources serve only a trailing window — Binance ~30 days, Bitfinex
+    a rolling week — so each pass refetches the whole window and upserts.
+    That self-heals gaps from downtime and, more importantly, means the
+    archive keeps growing past what either API will ever serve again.
+    """
+    await asyncio.sleep(12)  # let the seeds and adapters settle
+    async with ClientSession() as session:
+        while True:
+            for key, spec in SYMBOLS.items():
+                try:
+                    await _record_positioning(session, key, spec)
+                except Exception as error:  # noqa: BLE001 — best-effort
+                    print(f"positioning {key}: "
+                          f"{error.__class__.__name__}: {error}", flush=True)
+            await _push_positioning()
+            await asyncio.sleep(POSITIONING_POLL_SECONDS)
+
+
+async def _record_positioning(session, key: str, spec) -> None:
+    if spec.binance:
+        for metric, path in BINANCE_METRICS.items():
+            async with session.get(
+                f"{BINANCE_FUTURES_DATA}/{path}",
+                params={"symbol": spec.binance.upper(), "period": "5m",
+                        "limit": 500},
+                timeout=20,
+            ) as response:
+                rows = await response.json()
+            if isinstance(rows, list):
+                STORE.insert_positioning(key, metric, parse_binance_ratio(rows))
+            await asyncio.sleep(0.15)
+
+    pair = BITFINEX_PAIRS.get(key)
+    if pair:
+        sides = {}
+        for side in ("long", "short"):
+            async with session.get(
+                f"{BITFINEX_STATS}/pos.size:1m:{pair}:{side}/hist",
+                params={"limit": 5000}, timeout=25,
+            ) as response:
+                sides[side] = await response.json()
+            await asyncio.sleep(0.3)
+        points = parse_bitfinex_sizes(sides.get("long") or [],
+                                      sides.get("short") or [])
+        STORE.insert_positioning(key, "bitfinex-margin", points)
+
+
+async def _push_positioning() -> None:
+    """Send each subscriber the series for whatever symbol it is watching."""
+    start_ms = int((time.time() - POSITIONING_HISTORY_DAYS * 86_400) * 1000)
+    cache: dict[str, str] = {}
+    for ws, sub in list(STATE.clients.items()):
+        symbol = sub["symbol"]
+        if ws.closed:
+            continue
+        if symbol not in cache:
+            cache[symbol] = fastjson.dumps_str({
+                "type": "positioning", "symbol": symbol,
+                "series": STORE.positioning_series(symbol, start_ms)})
+        await ws.send_str(cache[symbol])
+
+
 async def flow_archive_loop() -> None:
     """Persist each completed minute of executed flow, per symbol."""
     while True:
@@ -898,6 +976,10 @@ async def send_symbol_seed(ws: web.WebSocketResponse, symbol: str) -> None:
                                   "events": STORE.recent_liquidations(symbol, 300)}))
     await ws.send_str(fastjson.dumps_str({"type": "liqmap", "symbol": symbol,
                                   "bands": accumulator.liq_estimator.bands()}))
+    await ws.send_str(fastjson.dumps_str({
+        "type": "positioning", "symbol": symbol,
+        "series": STORE.positioning_series(
+            symbol, int((time.time() - POSITIONING_HISTORY_DAYS * 86_400) * 1000))}))
     if STATE.metrics:
         await ws.send_str(fastjson.dumps_str({"type": "metrics", "data": STATE.metrics}))
 
@@ -1059,6 +1141,7 @@ async def main_async() -> None:
                  binance_depth_poll(), binance_futures_depth_poll(), metrics_poll(),
                  liquidation_estimator_poll(),
                  flow_archive_loop(), retention_loop(), backfill_cvd(),
+                 positioning_poll(),
                  heat_ring_loop(), broadcast_depth_loop()):
         asyncio.create_task(task)
     await asyncio.Event().wait()

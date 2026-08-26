@@ -24,6 +24,7 @@ import type {
   LiqBand,
   LiqEvent,
   MetricsMap,
+  PositioningSeries,
   ServerMessage,
   Trade,
 } from "../lib/types";
@@ -31,6 +32,7 @@ import type {
 export interface LayerFlags {
   liqs: boolean;
   liqmap: boolean;
+  positioning: boolean;
   heat: boolean;
   profile: boolean;
   walls: boolean;
@@ -63,6 +65,9 @@ interface LensState {
   liqs: LiqEvent[];
   liqMap: LiqBand[];
   cvd: [number, number][];
+  positioning: PositioningSeries;
+  /** Which positioning metric the chart draws; "" = best available. */
+  positioningMetric: string;
   metrics: MetricsMap;
   candleRows: Candle[];
   activeVenues: string[] | null; // null = all venues
@@ -82,6 +87,7 @@ interface LensState {
   setLayer(layer: keyof LayerFlags, on: boolean): void;
   setMaVisible(id: string, on: boolean): void;
   setBeepEnabled(on: boolean): void;
+  setPositioningMetric(metric: string): void;
   setConnection(status: ConnectionStatus): void;
   setCandleRows(rows: Candle[]): void;
   setReadout(readout: ReadoutData | null): void;
@@ -112,12 +118,13 @@ interface StoredPrefs {
   layers: LayerFlags;
   maVisible: Record<string, boolean>;
   beepEnabled: boolean;
+  positioningMetric: string;
 }
 
 const DEFAULT_LAYERS: LayerFlags = {
   heat: true, profile: true, walls: true, trades: true, depth: true,
   candles: true, cvd: true, vwap: true, levels: true,
-  liqs: true, liqmap: true,
+  liqs: true, liqmap: true, positioning: true,
 };
 
 function loadPrefs(): Partial<StoredPrefs> {
@@ -136,6 +143,7 @@ function savePrefs(state: LensState): void {
     layers: state.layers,
     maVisible: state.maVisible,
     beepEnabled: state.beepEnabled,
+    positioningMetric: state.positioningMetric,
   };
   try {
     localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
@@ -161,6 +169,8 @@ export const useLensStore = create<LensState>()(
     liqs: [],
     liqMap: [],
     cvd: [],
+    positioning: {},
+    positioningMetric: stored.positioningMetric ?? "",
     metrics: {},
     candleRows: [],
     activeVenues: null,
@@ -229,12 +239,15 @@ export const useLensStore = create<LensState>()(
         case "liqmap":
           set({ liqMap: message.bands ?? [] });
           break;
+        case "positioning":
+          set({ positioning: message.series ?? {} });
+          break;
       }
     },
 
     resetStreams() {
       set({ depth: null, heat: [], trades: [], liqs: [], liqMap: [],
-            cvd: [], readout: null });
+            cvd: [], positioning: {}, readout: null });
     },
 
     selectSymbol(symbol) {
@@ -282,6 +295,10 @@ export const useLensStore = create<LensState>()(
     },
     setBeepEnabled(on) {
       set({ beepEnabled: on });
+      savePrefs(get());
+    },
+    setPositioningMetric(metric) {
+      set({ positioningMetric: metric });
       savePrefs(get());
     },
     setConnection(status) {

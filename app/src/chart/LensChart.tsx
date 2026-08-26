@@ -22,6 +22,7 @@ import { useEffect, useRef } from "react";
 
 import { COLORS, MA_DEFS, type ChartStyle } from "../lib/config";
 import { computeMa, mergeCandles, styledRows } from "../lib/candles";
+import { pickPositioningMetric } from "../lib/positioning";
 import type { Candle } from "../lib/types";
 import { currentThreshold, useLensStore, type ReadoutData } from "../store/lens";
 import { registerChartExporter } from "./chartExport";
@@ -104,6 +105,31 @@ export function LensChart() {
       priceScaleId: "left", color: COLORS.gold, lineWidth: 1,
       priceLineVisible: false, lastValueVisible: false, title: "CVD",
     });
+    // Net positioning sits in its own band along the bottom on a private
+    // scale: it is a -100..+100 lean, not a price and not a USD total, so
+    // sharing either existing scale would flatten it into a straight line.
+    const positioningSeries = chart.addLineSeries({
+      priceScaleId: "positioning", color: "#8a7ac2", lineWidth: 2,
+      priceLineVisible: false, lastValueVisible: true, title: "net L/S",
+      priceFormat: { type: "custom", minMove: 0.01,
+                     formatter: (value: number) =>
+                       `${value >= 0 ? "+" : ""}${value.toFixed(0)}%` },
+    });
+    chart.priceScale("positioning").applyOptions({
+      scaleMargins: { top: 0.82, bottom: 0 }, visible: false,
+    });
+
+    function applyPositioning(): void {
+      const state = store.getState();
+      const metric = pickPositioningMetric(state.positioning, state.positioningMetric);
+      const points = metric ? state.positioning[metric] ?? [] : [];
+      positioningSeries.setData(
+        points.map(([t, v]) => ({ time: t as UTCTimestamp, value: v })));
+      positioningSeries.applyOptions({
+        visible: state.layers.positioning && points.length > 0,
+      });
+    }
+
     const maSeries = new Map<string, ISeriesApi<"Line">>(
       MA_DEFS.map((def) => [def.id, chart.addLineSeries({
         color: def.color, lineWidth: 1, visible: store.getState().maVisible[def.id],
@@ -339,6 +365,9 @@ export function LensChart() {
       }),
       store.subscribe((s) => s.layers.candles, (on) => priceSeries.applyOptions({ visible: on })),
       store.subscribe((s) => s.layers.cvd, (on) => cvdSeries.applyOptions({ visible: on })),
+      store.subscribe((s) => s.positioning, applyPositioning),
+      store.subscribe((s) => s.positioningMetric, applyPositioning),
+      store.subscribe((s) => s.layers.positioning, applyPositioning),
       store.subscribe((s) => s.layers.vwap, updateVwapLine),
       store.subscribe((s) => s.depth?.vwap ?? null, updateVwapLine),
       store.subscribe((s) => s.layers.levels, anchorDayLines),
@@ -366,6 +395,7 @@ export function LensChart() {
     ];
 
     cvdSeries.applyOptions({ visible: store.getState().layers.cvd });
+    applyPositioning();
     applyPriceData();
     loadDayLevels();
 

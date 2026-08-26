@@ -78,6 +78,12 @@ export interface LiqEvent {
   notional: number;
 }
 
+/** [ts_seconds, net_pct] — net long/short lean, -100..+100. */
+export type PositioningPoint = [number, number];
+
+/** metric key -> series. Keys are defined in market_lens/positioning.py. */
+export type PositioningSeries = Record<string, PositioningPoint[]>;
+
 /** [price_bin, longUsd, shortUsd] — estimated liquidation density. */
 export type LiqBand = [number, number, number];
 
@@ -91,6 +97,7 @@ export type ServerMessage =
   | ({ type: "liq"; symbol: string } & LiqEvent)
   | { type: "liqHistory"; symbol: string; events: LiqEvent[] }
   | { type: "liqmap"; symbol: string; bands: LiqBand[] }
+  | { type: "positioning"; symbol: string; series: PositioningSeries }
   | { type: "metrics"; data: MetricsMap };
 
 export type ConnectionStatus = "connecting" | "live" | "reconnecting" | "stale";

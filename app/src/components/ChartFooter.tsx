@@ -1,5 +1,6 @@
 import { exportChartPng } from "../chart/chartExport";
-import { MA_DEFS } from "../lib/config";
+import { MA_DEFS, POSITIONING_LABELS } from "../lib/config";
+import { availableMetrics, pickPositioningMetric } from "../lib/positioning";
 import { formatUsd } from "../lib/format";
 import { useLensStore, type LayerFlags } from "../store/lens";
 
@@ -8,7 +9,45 @@ const LAYER_TOGGLES: [keyof LayerFlags, string][] = [
   ["heat", "heatmap"], ["profile", "profile"], ["depth", "depth"],
   ["liqs", "liqs"], ["liqmap", "liq map"],
   ["cvd", "CVD"], ["vwap", "VWAP"], ["levels", "day levels"],
+  ["positioning", "net L/S"],
 ];
+
+/** Which positioning series the chart draws. Only rendered when the
+    symbol has more than one — most do not, and the equity perps have
+    none at all. */
+function PositioningPicker() {
+  const positioning = useLensStore((s) => s.positioning);
+  const chosen = useLensStore((s) => s.positioningMetric);
+  const setMetric = useLensStore((s) => s.setPositioningMetric);
+  const available = availableMetrics(positioning);
+  if (available.length === 0) {
+    return <span className="gauge muted">net L/S: no source for this symbol</span>;
+  }
+  const active = pickPositioningMetric(positioning, chosen);
+  const latest = active ? positioning[active]?.at(-1)?.[1] : undefined;
+  return (
+    <span className="gauge">
+      net L/S{" "}
+      {latest !== undefined && (
+        <b className={latest >= 0 ? "buy-c" : "sell-c"}>
+          {latest >= 0 ? "+" : ""}{latest.toFixed(0)}%
+        </b>
+      )}{" "}
+      <select
+        className="mini-btn"
+        aria-label="Positioning source"
+        value={active ?? ""}
+        onChange={(event) => setMetric(event.target.value)}
+      >
+        {available.map((metric) => (
+          <option key={metric} value={metric}>
+            {POSITIONING_LABELS[metric] ?? metric}
+          </option>
+        ))}
+      </select>
+    </span>
+  );
+}
 
 function Gauges() {
   const depth = useLensStore((s) => s.depth);
@@ -111,6 +150,7 @@ export function ChartFooter() {
       <div className="footer-row">
         <Gauges />
         <LiqGauge />
+        <PositioningPicker />
         <VenueToggles />
         <label className="muted toggle">
           <input

@@ -104,7 +104,8 @@ def test_prune_before_removes_old_keeps_new(store):
     # liq map, then "oi_observations"/"flow_minutes" with the persistence
     # audit — prune_before deliberately walks every table.
     assert deleted == {"trades": 1, "depth_snapshots": 2, "liquidations": 0,
-                       "oi_observations": 0, "flow_minutes": 0}
+                       "oi_observations": 0, "flow_minutes": 0,
+                       "positioning": 0}
     assert [row["ts"] for row in store.recent_trades("BTC", limit=10)] == [900]
     assert [row[0] for row in store.depth_range("BTC", 0, 10_000)] == [900, 900]
 
@@ -207,6 +208,46 @@ def test_venue_column_is_added_to_a_pre_existing_table(tmp_path):
         assert store.cvd_series("BTC", 0, ["binance"]) == [(120, 3.0)]
     finally:
         store.close()
+
+
+# ---------------------------------------------------------- positioning
+
+
+def test_positioning_round_trip_normalises_to_net_percent(store):
+    from market_lens.positioning import PositioningPoint
+    store.insert_positioning("BTC", "top-positions", [
+        PositioningPoint(60_000, 0.6, 0.4),
+        PositioningPoint(120_000, 0.45, 0.55),
+    ])
+    store.insert_positioning("BTC", "bitfinex-margin", [
+        PositioningPoint(60_000, 90_000.0, 10_000.0)])
+    series = store.positioning_series("BTC", 0)
+    assert series["top-positions"] == [[60, 20.0], [120, -10.0]]
+    assert series["bitfinex-margin"] == [[60, 80.0]]
+
+
+def test_positioning_refetch_upserts_instead_of_duplicating(store):
+    """Both APIs serve a trailing window, so every pass re-sends points we
+    already hold."""
+    from market_lens.positioning import PositioningPoint
+    first = store.insert_positioning("BTC", "top-positions",
+                                     [PositioningPoint(60_000, 0.6, 0.4)])
+    again = store.insert_positioning("BTC", "top-positions",
+                                     [PositioningPoint(60_000, 0.7, 0.3)])
+    assert (first, again) == (1, 0)
+    assert store.positioning_series("BTC", 0)["top-positions"] == [[60, 40.0]]
+
+
+def test_positioning_filters_by_symbol_and_start(store):
+    from market_lens.positioning import PositioningPoint
+    store.insert_positioning("BTC", "top-positions", [PositioningPoint(60_000, 1, 0)])
+    store.insert_positioning("ETH", "top-positions", [PositioningPoint(60_000, 0, 1)])
+    assert store.positioning_series("ETH", 0)["top-positions"] == [[60, -100.0]]
+    assert store.positioning_series("BTC", 120_000) == {}
+
+
+def test_positioning_empty_points_is_a_no_op(store):
+    assert store.insert_positioning("BTC", "top-positions", []) == 0
 
 
 # ---------------------------------------------------- OI observations (liq map)

@@ -148,3 +148,17 @@ export const BIN_MULTS = [0.2, 0.5, 1, 2, 5, 10] as const;
 
 export const MAX_TAPE_ROWS = 120;
 export const MAX_TRADES = 600; // in-memory big-trade store (history + live)
+
+/** Positioning metrics, in preference order — money-weighted first, then
+    the real margin book, then the account-count sentiment gauges. Mirrors
+    market_lens/positioning.py. */
+export const POSITIONING_METRICS = [
+  "top-positions", "bitfinex-margin", "top-accounts", "global-accounts",
+] as const;
+
+export const POSITIONING_LABELS: Record<string, string> = {
+  "top-positions": "Binance top 20% positions",
+  "bitfinex-margin": "Bitfinex margin book",
+  "top-accounts": "Binance top 20% accounts",
+  "global-accounts": "Binance all accounts",
+};
