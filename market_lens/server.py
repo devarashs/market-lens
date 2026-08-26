@@ -79,7 +79,15 @@ METRICS_POLL_SECONDS = 30
 # 1000 levels at a 5s cadence stays well inside Binance's request-weight
 # budget (depth limit=1000 costs 50 weight; 5 symbols staggered ≈ 3000/min).
 BINANCE_DEPTH_POLL_SECONDS = 5.0
-CVD_MAX_MINUTES = 24 * 60
+# Two weeks of minute buckets per symbol. Cheap in memory (a float per
+# minute) and long enough for CVD divergence to mean something on the
+# higher timeframes; the wire payload is bounded by downsampling instead
+# of by throwing the history away.
+CVD_MAX_MINUTES = 14 * 24 * 60
+# Points sent to the client. Above this the series is thinned by an
+# integer stride — the running total is still accumulated over EVERY
+# minute, so thinning changes the resolution of the line, never its level.
+CVD_MAX_POINTS = 2000
 
 
 class SymbolAccumulators:
@@ -149,12 +157,27 @@ class SymbolAccumulators:
                        for price, (buy, sell) in self.profile.items())
         return weighted / total
 
-    def cvd_points(self) -> list[list]:
+    def cvd_points(self, max_points: int = CVD_MAX_POINTS) -> list[list]:
+        """The cumulative delta series, whole history, thinned to fit.
+
+        Previously this returned only the last 720 minutes — the series
+        was 12h long however much history the collector held, which read
+        as CVD being built from almost no data (Arash, 2026-08-26). The
+        running total is summed over every minute and only the emitted
+        POINTS are strided, so a thinned line sits at exactly the same
+        level as the dense one; it just has fewer vertices.
+        """
+        minutes = sorted(self.cvd_minutes)
+        if not minutes:
+            return []
+        stride = max(1, -(-len(minutes) // max_points))  # ceil division
         total, points = 0.0, []
-        for minute in sorted(self.cvd_minutes):
+        last = len(minutes) - 1
+        for index, minute in enumerate(minutes):
             total += self.cvd_minutes[minute]
-            points.append([minute, round(total, 2)])
-        return points[-720:]  # 12h of minutes is plenty for the pane
+            if index % stride == 0 or index == last:
+                points.append([minute, round(total, 2)])
+        return points
 
     def pressure_totals(self) -> dict:
         buy = sum(n for _, side, n in self.pressure if side == "buy")
@@ -394,6 +417,120 @@ async def liquidation_estimator_poll() -> None:
                     if sub["symbol"] == key and not ws.closed:
                         await ws.send_str(message)
             await asyncio.sleep(LIQ_POLL_SECONDS)
+
+
+CVD_BACKFILL_DAYS = 14
+# Below this much overlap the volume ratio is noise, so the backfill goes
+# in uncalibrated and says so.
+CVD_CALIBRATION_MIN_MINUTES = 20
+
+
+def _kline_delta_usd(row: list) -> float:
+    """Signed taker flow for one Binance kline, in quote units.
+
+    Binance reports quote volume [7] and the taker-BUY share of it [10];
+    the sell share is the remainder, so delta = buy - sell = 2*buy - total.
+    """
+    return 2 * float(row[10]) - float(row[7])
+
+
+async def backfill_cvd() -> None:
+    """Extend CVD back past the day we started recording flow ourselves.
+
+    Our own archive only reaches back to when flow_minutes began, which
+    left the series looking like it was built from almost nothing. Binance
+    publishes taker-buy volume per 1m kline going back years, so the delta
+    is exactly recoverable for the Binance-listed symbols.
+
+    The catch, and the reason for the scaling: the live series sums NINE
+    venues while a kline is Binance spot alone, so a raw splice would show
+    a visibly shallower slope before the seam and invent a divergence that
+    never happened. The overlap where we hold both is used to measure the
+    venue ratio, and the backfilled minutes are scaled by it. That makes
+    the history comparable in magnitude, not identical in provenance — it
+    is a reconstruction, and only fills minutes we never recorded.
+
+    Memory only: this is derived, re-derivable, and Binance-shaped, so it
+    never enters the archive that a future study would read.
+    """
+    await asyncio.sleep(8)  # let the adapters and seeds settle first
+    now = time.time()
+    start_ms = int((now - CVD_BACKFILL_DAYS * 86_400) * 1000)
+    async with ClientSession() as session:
+        for key in CORE_SYMBOLS:
+            spec = SYMBOLS[key]
+            if not spec.binance:
+                continue
+            accumulator = STATE.accumulators[key]
+            recorded = dict(accumulator.cvd_minutes)
+            try:
+                klines = await _fetch_klines_range(
+                    session, spec.binance.upper(), start_ms, int(now * 1000))
+            except Exception as error:  # noqa: BLE001 — backfill is best-effort
+                print(f"cvd backfill {key}: {error.__class__.__name__}: {error}",
+                      flush=True)
+                continue
+            if not klines:
+                continue
+
+            # Calibrate on the minutes we hold both ways.
+            gross_rows = STORE.flow_minutes_since(
+                key, int((now - CVD_BACKFILL_DAYS * 86_400) * 1000))
+            ours: dict[int, float] = defaultdict(float)
+            for ts_ms, _price_bin, buy_usd, sell_usd in gross_rows:
+                ours[ts_ms // 60_000 * 60] += buy_usd + sell_usd
+            overlap_ours = overlap_theirs = 0.0
+            overlap_minutes = 0
+            for row in klines:
+                minute = int(row[0]) // 60_000 * 60
+                if minute in ours:
+                    overlap_ours += ours[minute]
+                    overlap_theirs += float(row[7])
+                    overlap_minutes += 1
+            if (overlap_minutes >= CVD_CALIBRATION_MIN_MINUTES
+                    and overlap_theirs > 0):
+                scale = min(20.0, max(0.2, overlap_ours / overlap_theirs))
+                note = f"x{scale:.2f} from {overlap_minutes}m overlap"
+            else:
+                scale = 1.0
+                note = "uncalibrated (too little overlap)"
+
+            added = 0
+            for row in klines:
+                minute = int(row[0]) // 60_000 * 60
+                if minute in recorded:
+                    continue  # our own recording always wins
+                accumulator.cvd_minutes[minute] += _kline_delta_usd(row) * scale
+                added += 1
+            if added:
+                span_d = (max(accumulator.cvd_minutes)
+                          - min(accumulator.cvd_minutes)) / 86_400
+                print(f"cvd backfill: {key} +{added} minutes {note} "
+                      f"— series now {span_d:.1f}d", flush=True)
+
+
+async def _fetch_klines_range(session, symbol: str, start_ms: int,
+                              end_ms: int) -> list:
+    """Binance 1m klines across a range, paging the 1000-row limit."""
+    rows: list = []
+    cursor = start_ms
+    while cursor < end_ms:
+        async with session.get(
+            f"{BINANCE_REST}/api/v3/klines",
+            params={"symbol": symbol, "interval": "1m",
+                    "startTime": cursor, "endTime": end_ms, "limit": 1000},
+            timeout=20,
+        ) as response:
+            batch = await response.json()
+        if not isinstance(batch, list) or not batch:
+            break
+        rows.extend(batch)
+        nxt = int(batch[-1][0]) + 60_000
+        if nxt <= cursor:
+            break
+        cursor = nxt
+        await asyncio.sleep(0.12)  # keep well inside the weight budget
+    return rows
 
 
 async def flow_archive_loop() -> None:
@@ -763,7 +900,7 @@ def seed_liq_estimators() -> None:
                   f"{len(rows)} observations ({span_h:.1f}h)", flush=True)
 
 
-CVD_SEED_HOURS = 24  # matches CVD_MAX_MINUTES, the in-memory series length
+CVD_SEED_HOURS = CVD_MAX_MINUTES // 60  # seed as far back as memory holds
 
 
 def seed_flow() -> None:
@@ -810,7 +947,7 @@ async def main_async() -> None:
                  binance_liquidation_adapter(STATE.on_liquidation),
                  binance_depth_poll(), binance_futures_depth_poll(), metrics_poll(),
                  liquidation_estimator_poll(),
-                 flow_archive_loop(), retention_loop(),
+                 flow_archive_loop(), retention_loop(), backfill_cvd(),
                  heat_ring_loop(), broadcast_depth_loop()):
         asyncio.create_task(task)
     await asyncio.Event().wait()
