@@ -10,12 +10,28 @@ import { mergeCandles } from "./candles";
 import type { Candle } from "./types";
 import { useLensStore } from "../store/lens";
 
+/** Delay before retrying a failed load, in ms — 400, 800, 1600, capped.
+
+    A first load that fails used to wait for the next poll instead, and on
+    anything but the 1s view that is FIFTEEN SECONDS of blank chart. The
+    socket layers (book, tape, heatmap) keep painting throughout, so it
+    reads exactly as Arash described it: switch symbol, some things show,
+    candles do not, reload fixes it (2026-08-27). Measured fetch time for
+    1000 candles is 600-770ms, so the window for a switch to land on an
+    in-flight request is wide. */
+export function backoffDelay(attempt: number): number {
+  return Math.min(4_000, 400 * 2 ** Math.max(0, attempt - 1));
+}
+
 export function useCandlePolling(): void {
   const symbol = useLensStore((state) => state.symbol);
   const timeframe = useLensStore((state) => state.timeframe);
 
   useEffect(() => {
     const controller = new AbortController();
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let attempt = 0;
 
     async function load(): Promise<void> {
       try {
@@ -24,22 +40,28 @@ export function useCandlePolling(): void {
           { signal: controller.signal },
         );
         const rows: Candle[] | { error: string } = await response.json();
-        if (Array.isArray(rows)) {
-          // Merge, don't replace: pan-left backfill lives in candleRows
-          // and a poll must never throw that history away.
-          const store = useLensStore.getState();
-          store.setCandleRows(mergeCandles(store.candleRows, rows));
-        }
+        if (cancelled) return;
+        if (!Array.isArray(rows)) throw new Error("klines payload");
+        attempt = 0;
+        // Merge, don't replace: pan-left backfill lives in candleRows
+        // and a poll must never throw that history away.
+        const store = useLensStore.getState();
+        store.setCandleRows(mergeCandles(store.candleRows, rows));
       } catch {
-        // Transient gap: retry on the next tick; the connection pill
-        // already tells the user when the server is unreachable.
+        // An abort means this pair was superseded — the new effect is
+        // already loading, and retrying here would fight it.
+        if (cancelled || controller.signal.aborted) return;
+        attempt += 1;
+        retryTimer = setTimeout(load, backoffDelay(attempt));
       }
     }
 
     load();
     const interval = setInterval(load, timeframe === "1s" ? 2_500 : 15_000);
     return () => {
+      cancelled = true;
       controller.abort();
+      clearTimeout(retryTimer);
       clearInterval(interval);
     };
   }, [symbol, timeframe]);

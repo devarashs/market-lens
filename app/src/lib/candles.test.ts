@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { backoffDelay } from "./useCandlePolling";
+
 import { computeEma, computeSma, mergeCandles, styledRows, toHeikinAshi, bucketSeries } from "./candles";
 import type { Candle } from "./types";
 
@@ -142,5 +144,25 @@ describe("bucketSeries", () => {
 
   it("handles an empty series", () => {
     expect(bucketSeries([], 3_600)).toEqual([]);
+  });
+});
+
+describe("backoffDelay", () => {
+  it("retries fast, then backs off, then caps", () => {
+    expect(backoffDelay(1)).toBe(400);
+    expect(backoffDelay(2)).toBe(800);
+    expect(backoffDelay(3)).toBe(1_600);
+    expect(backoffDelay(10)).toBe(4_000);
+  });
+
+  it("never returns a negative or zero delay", () => {
+    expect(backoffDelay(0)).toBeGreaterThan(0);
+    expect(backoffDelay(-5)).toBeGreaterThan(0);
+  });
+
+  it("is far below the 15s poll it replaces", () => {
+    // The point of the retry: a failed first load used to leave the chart
+    // blank until the next poll tick.
+    expect(backoffDelay(1)).toBeLessThan(15_000);
   });
 });

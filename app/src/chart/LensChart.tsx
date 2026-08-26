@@ -159,10 +159,16 @@ export function LensChart() {
     let dayLines: IPriceLine[] = [];
     let dayLevels: DayLevels | null = null;
 
+    let pendingViewportReset = false;
+
     function applyPriceData(): void {
       const { candleRows, chartStyle, layers } = store.getState();
       priceSeries.setData(styledRows(candleRows, chartStyle) as never);
       priceSeries.applyOptions({ visible: layers.candles });
+      if (pendingViewportReset && candleRows.length > 0) {
+        pendingViewportReset = false;
+        chart.timeScale().scrollToRealTime();
+      }
       for (const def of MA_DEFS) {
         maSeries.get(def.id)!.setData(
           computeMa(candleRows, def).map((p) => ({ ...p, time: p.time as UTCTimestamp })));
@@ -451,7 +457,13 @@ export function LensChart() {
       store.subscribe((s) => s.symbol, () => {
         historyExhausted = false;
         loadDayLevels();
-        chart.timeScale().scrollToRealTime();
+        // Do NOT move the viewport yet: candleRows is empty at this
+        // instant, and scrolling an empty series leaves the range
+        // wherever the PREVIOUS symbol was panned or zoomed to. When the
+        // new rows land somewhere outside it the chart looks blank while
+        // the socket layers keep painting — "switch symbol, reload to see
+        // candles" (Arash, 2026-08-27). Deferred until there is data.
+        pendingViewportReset = true;
       }),
       store.subscribe((s) => s.timeframe, () => { historyExhausted = false; }),
       // Redraw triggers for the overlay planes.
