@@ -99,13 +99,20 @@ class SymbolAccumulators:
         # its stated assumptions); fed by the futures-OI poll below.
         self.liq_estimator = LiquidationEstimator(price_bin)
         self.cvd_minutes: dict[int, float] = defaultdict(float)   # minute → Δnotional
-        self.profile: dict[float, list[float]] = defaultdict(lambda: [0.0, 0.0])  # bin → [buy, sell]
-        self.pressure: deque[tuple[float, str, float]] = deque()  # (ts, side, notional)
-        # Executed flow awaiting archival: minute (epoch s) → bin → [buy, sell].
-        # Flushed and dropped once the minute completes; this is only a
-        # write buffer, never a read path.
-        self.flow_pending: dict[int, dict[float, list[float]]] = defaultdict(
+        # Executed volume, split by venue so the venue filter reaches the
+        # profile, the VWAP drawn from it, and the pressure gauge — these
+        # used to aggregate at ingest and ignore the filter entirely
+        # (Arash: "I expect it to be reflected wherever it can").
+        # venue → bin → [buy, sell]
+        self.profile: dict[str, dict[float, list[float]]] = defaultdict(
             lambda: defaultdict(lambda: [0.0, 0.0]))
+        # (ts, venue, side, notional)
+        self.pressure: deque[tuple[float, str, str, float]] = deque()
+        # Executed flow awaiting archival: minute (epoch s) → venue → bin →
+        # [buy, sell]. Flushed and dropped once the minute completes; this
+        # is a write buffer, never a read path.
+        self.flow_pending: dict[int, dict[str, dict[float, list[float]]]] = defaultdict(
+            lambda: defaultdict(lambda: defaultdict(lambda: [0.0, 0.0])))
         # Minutes in cvd_minutes that came from the kline reconstruction
         # rather than from recorded flow. Tracked so the backfill can be
         # recomputed as its calibration improves, without ever disturbing
@@ -117,7 +124,7 @@ class SymbolAccumulators:
         # denser recent texture than whales alone provide.
         self.recent_trades: deque[dict] = deque(maxlen=800)
 
-    def on_trade(self, symbol: str, trade: dict) -> None:
+    def on_trade(self, symbol: str, trade: dict, venue: str = "") -> None:
         self.last_price = trade["price"]
         minute = int(trade["ts"] / 60000) * 60
         signed = trade["notional"] if trade["side"] == "buy" else -trade["notional"]
@@ -127,40 +134,63 @@ class SymbolAccumulators:
                 del self.cvd_minutes[key]
         price_bin = bin_price(trade["price"], SYMBOLS[symbol].price_bin)
         side_index = 0 if trade["side"] == "buy" else 1
-        self.profile[price_bin][side_index] += trade["notional"]
-        self.flow_pending[minute][price_bin][side_index] += trade["notional"]
+        self.profile[venue][price_bin][side_index] += trade["notional"]
+        self.flow_pending[minute][venue][price_bin][side_index] += trade["notional"]
         now = time.time()
-        self.pressure.append((now, trade["side"], trade["notional"]))
+        self.pressure.append((now, venue, trade["side"], trade["notional"]))
         while self.pressure and self.pressure[0][0] < now - PRESSURE_WINDOW_SECONDS:
             self.pressure.popleft()
 
     def seed_flow(self, rows: list[tuple]) -> None:
-        """Fold archived flow minutes — (ts_ms, price_bin, buy, sell) — back
-        into the CVD series and the volume profile. Both are derived from
-        the FULL trade stream, which is far too large to archive, so the
-        per-minute aggregate is what makes them survive a restart."""
-        for ts_ms, price_bin, buy_usd, sell_usd in rows:
+        """Fold archived flow minutes — (ts_ms, venue, price_bin, buy, sell)
+        — back into the CVD series and the volume profile. Both derive from
+        the FULL trade stream, far too large to archive, so the per-minute
+        aggregate is what makes them survive a restart."""
+        for ts_ms, venue, price_bin, buy_usd, sell_usd in rows:
             self.cvd_minutes[ts_ms // 1000] += buy_usd - sell_usd
-            bucket = self.profile[price_bin]
+            bucket = self.profile[venue][price_bin]
             bucket[0] += buy_usd
             bucket[1] += sell_usd
 
-    def drain_completed_flow(self, current_minute: int
-                             ) -> list[tuple[int, dict[float, list[float]]]]:
+    def drain_completed_flow(self, current_minute: int) -> list[tuple[int, dict]]:
         """Remove and return every buffered minute before `current_minute`.
         The open minute stays buffered so it is archived exactly once, when
         complete."""
         done = sorted(m for m in self.flow_pending if m < current_minute)
         return [(minute, self.flow_pending.pop(minute)) for minute in done]
 
-    def vwap(self) -> float | None:
+    def _profile_bins(self, venues: list[str] | None) -> dict[float, list[float]]:
+        """Merge the per-venue profiles the filter selects into one map."""
+        merged: dict[float, list[float]] = defaultdict(lambda: [0.0, 0.0])
+        for venue, bins in self.profile.items():
+            if venues is not None and venue not in venues:
+                continue
+            for price_bin, (buy, sell) in bins.items():
+                bucket = merged[price_bin]
+                bucket[0] += buy
+                bucket[1] += sell
+        return merged
+
+    def vwap(self, venues: list[str] | None = None) -> float | None:
         """Session VWAP from the executed-volume profile (notional-weighted)."""
-        total = sum(buy + sell for buy, sell in self.profile.values())
+        bins = self._profile_bins(venues)
+        total = sum(buy + sell for buy, sell in bins.values())
         if total == 0:
             return None
-        weighted = sum(price * (buy + sell)
-                       for price, (buy, sell) in self.profile.items())
+        weighted = sum(price * (buy + sell) for price, (buy, sell) in bins.items())
         return weighted / total
+
+    def pending_cvd_minutes(self, venues: list[str] | None) -> dict[int, float]:
+        """Delta per minute still in the write buffer — the minutes the
+        archive has not seen yet, which a filtered series must add back."""
+        out: dict[int, float] = defaultdict(float)
+        for minute, by_venue in self.flow_pending.items():
+            for venue, bins in by_venue.items():
+                if venues is not None and venue not in venues:
+                    continue
+                for buy, sell in bins.values():
+                    out[minute] += buy - sell
+        return out
 
     def cvd_points(self, max_points: int = CVD_MAX_POINTS) -> list[list]:
         """The cumulative delta series, whole history, thinned to fit.
@@ -184,13 +214,17 @@ class SymbolAccumulators:
                 points.append([minute, round(total, 2)])
         return points
 
-    def pressure_totals(self) -> dict:
-        buy = sum(n for _, side, n in self.pressure if side == "buy")
-        sell = sum(n for _, side, n in self.pressure if side == "sell")
+    def pressure_totals(self, venues: list[str] | None = None) -> dict:
+        buy = sum(n for _, venue, side, n in self.pressure
+                  if side == "buy" and (venues is None or venue in venues))
+        sell = sum(n for _, venue, side, n in self.pressure
+                   if side == "sell" and (venues is None or venue in venues))
         return {"buy": round(buy, 2), "sell": round(sell, 2)}
 
-    def profile_rows(self, limit: int = 120) -> list[list]:
-        rows = sorted(self.profile.items(), key=lambda kv: -(kv[1][0] + kv[1][1]))[:limit]
+    def profile_rows(self, limit: int = 120,
+                     venues: list[str] | None = None) -> list[list]:
+        bins = self._profile_bins(venues)
+        rows = sorted(bins.items(), key=lambda kv: -(kv[1][0] + kv[1][1]))[:limit]
         return [[price, round(buy, 2), round(sell, 2)]
                 for price, (buy, sell) in sorted(rows)]
 
@@ -208,7 +242,7 @@ class LensState:
         self.books[(symbol, venue)] = book
 
     def on_trade(self, venue: str, symbol: str, trade: dict) -> None:
-        self.accumulators[symbol].on_trade(symbol, trade)
+        self.accumulators[symbol].on_trade(symbol, trade, venue)
         threshold = SYMBOLS[symbol].big_trade_usd
         # Forward from 10% of threshold: the chart wants aggregated-flow
         # texture, and the client slider filters from ×0.1 up. Only
@@ -576,9 +610,9 @@ async def flow_archive_loop() -> None:
         await asyncio.sleep(20)
         current_minute = int(time.time() / 60) * 60
         for symbol, accumulator in STATE.accumulators.items():
-            for minute, bins in accumulator.drain_completed_flow(current_minute):
+            for minute, by_venue in accumulator.drain_completed_flow(current_minute):
                 try:
-                    STORE.insert_flow_minute(symbol, minute * 1000, bins)
+                    STORE.insert_flow_minute(symbol, minute * 1000, by_venue)
                 except Exception as error:  # noqa: BLE001 — archiving is best-effort
                     print(f"flow archive {symbol}: "
                           f"{error.__class__.__name__}: {error}", flush=True)
@@ -703,7 +737,12 @@ async def broadcast_depth_loop() -> None:
                 for venue, book in venue_books
             }
             imbalance = book_imbalance(profile)
-            tape = tape_signal(list(accumulator.pressure), spec.big_trade_usd,
+            # The signals read the same filtered view the panels show, so a
+            # venue filter changes the verdict rather than only the picture.
+            filtered_pressure = [(ts, side, notional)
+                                 for ts, venue, side, notional in accumulator.pressure
+                                 if venues is None or venue in venues]
+            tape = tape_signal(filtered_pressure, spec.big_trade_usd,
                                accumulator.cvd_minutes)
             book = book_signal(imbalance, attributed_walls, profile["mid"],
                                list(accumulator.heat), effective_bin)
@@ -716,9 +755,9 @@ async def broadcast_depth_loop() -> None:
                 "imbalance": imbalance,
                 "walls": attributed_walls,
                 "best": best,
-                "vwap": accumulator.vwap(),
-                "pressure": accumulator.pressure_totals(),
-                "profile": accumulator.profile_rows(),
+                "vwap": accumulator.vwap(venues),
+                "pressure": accumulator.pressure_totals(venues),
+                "profile": accumulator.profile_rows(venues=venues),
                 "signals": {"tape": tape, "book": book,
                             "combined": combined_signal(tape, book)},
             })
@@ -793,6 +832,34 @@ async def klines_handler(request: web.Request) -> web.Response:
 # ------------------------------------------------------------------ ws + app
 
 
+def filtered_cvd_points(symbol: str, venues: list[str] | None) -> list[list]:
+    """CVD for a venue subset, rebuilt from the archive.
+
+    Unfiltered we use the in-memory series, which is fast and carries the
+    kline reconstruction. Filtered, the per-venue history lives only in
+    `flow_minutes`, so it is summed there and topped up with the minutes
+    still sitting in the write buffer. Rows archived before venue
+    attribution existed carry an empty venue and are simply not in a
+    filtered total — we do not know where they came from, so claiming
+    them for any venue would be a guess.
+    """
+    accumulator = STATE.accumulators[symbol]
+    if not venues:
+        return accumulator.cvd_points()
+    start_ms = int((time.time() - CVD_MAX_MINUTES * 60) * 1000)
+    deltas: dict[int, float] = defaultdict(float)
+    for minute, delta in STORE.cvd_series(symbol, start_ms, venues):
+        deltas[int(minute)] += delta or 0.0
+    for minute, delta in accumulator.pending_cvd_minutes(venues).items():
+        deltas[minute] += delta
+    total, points = 0.0, []
+    for minute in sorted(deltas):
+        total += deltas[minute]
+        points.append([minute, round(total, 2)])
+    stride = max(1, -(-len(points) // CVD_MAX_POINTS))
+    return points[::stride] if stride > 1 else points
+
+
 async def send_symbol_seed(ws: web.WebSocketResponse, symbol: str) -> None:
     """On (re)subscribe: recorded trades + heat ring + CVD + latest metrics."""
     accumulator = STATE.accumulators[symbol]
@@ -811,7 +878,8 @@ async def send_symbol_seed(ws: web.WebSocketResponse, symbol: str) -> None:
     await ws.send_str(fastjson.dumps_str({"type": "heat", "symbol": symbol,
                                   "cols": list(accumulator.heat)}))
     await ws.send_str(fastjson.dumps_str({"type": "cvd", "symbol": symbol,
-                                  "points": accumulator.cvd_points()}))
+                                  "points": filtered_cvd_points(
+                                      symbol, (STATE.clients.get(ws) or {}).get("venues"))}))
     await ws.send_str(fastjson.dumps_str({"type": "liqHistory", "symbol": symbol,
                                   "events": STORE.recent_liquidations(symbol, 300)}))
     await ws.send_str(fastjson.dumps_str({"type": "liqmap", "symbol": symbol,

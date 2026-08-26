@@ -269,15 +269,25 @@ Each adapter is failure-isolated. Coinbase and Kraken are USD-quoted
 (their real liquidity); they join the USDT-quoted aggregate with the ~2bp
 peg smear every cross-venue aggregator accepts. BNB trades on neither
 (Binance's own token); HYPE remains HL-only.</p>
-<p>Footer checkboxes include/exclude venues from <i>your</i> view — the
-filter reaches everything venue-tagged: the aggregated book, walls and
-attribution (server-side per client), plus the tape list, chart trade
-dashes, and trade sounds (client-side). What stays all-venue for now:
-volume profile, CVD, pressure and the heatmap (aggregated at ingest;
-per-venue accumulators are a roadmap item). Liquidation prints carry venue
-binance-fut and filter with it. Books are binned per
-symbol and summed in USD notional. Still on the candidate list: dYdX v4 —
-see <code>docs/venue-feeds.md</code>.</p>`},{id:"recording",title:"Recording (the archive)",body:`
+<p>Footer checkboxes include/exclude venues from <i>your</i> view, and the
+filter now reaches nearly everything: the aggregated book, walls and
+attribution; the <b>volume profile</b> and the <b>VWAP</b> drawn from it;
+<b>CVD</b>; the <b>tape-pressure</b> gauge; and the <b>tape signal and
+combined verdict</b>, so unticking a venue changes the read rather than
+just the picture. Client-side it also filters the tape list, the chart
+trade dashes and the trade sounds. Liquidation prints carry venue
+binance-fut and filter with it.</p>
+<p><b>The heatmap is the one exception</b>, and deliberately: it is a ring
+of already-aggregated book columns, and keeping a separate ring per venue
+would cost roughly a quarter of a gigabyte for the multi-venue symbols
+alone. It stays all-venue — so with a filter active, the live book layers
+narrow while the heatmap behind them still shows everyone. Historical CVD
+carries the same small caveat in the other direction: rows archived
+before venue attribution existed (before 2026-08-26) count in an
+unfiltered total but cannot appear in a filtered one, because we genuinely
+do not know which venue they came from.</p>
+<p>Books are binned per symbol and summed in USD notional. Still on the
+candidate list: dYdX v4 — see <code>docs/venue-feeds.md</code>.</p>`},{id:"recording",title:"Recording (the archive)",body:`
 <p>While running, the server records to a SQLite database at
 <code>data_recorded/lens.db</code>: binned depth snapshots every 30s per
 symbol, and every big trade. This history has <b>no free source

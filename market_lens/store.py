@@ -90,12 +90,23 @@ CREATE TABLE IF NOT EXISTS flow_minutes (
     -- seconds-valued column would be pruned to nothing on first run.
     ts        INTEGER NOT NULL,  -- minute bucket start, epoch ms
     symbol    TEXT    NOT NULL,
+    venue     TEXT    NOT NULL DEFAULT '',
     price_bin REAL    NOT NULL,
     buy_usd   REAL    NOT NULL,
     sell_usd  REAL    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_flow_symbol_ts ON flow_minutes (symbol, ts);
 """
+
+# Columns added after the table first shipped. SQLite's CREATE TABLE IF NOT
+# EXISTS will not retrofit them, so they are applied explicitly.
+_MIGRATIONS = (
+    # Venue attribution, so the venue filter can reach CVD (2026-08-26).
+    # Rows written before this land in the '' venue: counted in the
+    # unfiltered series, invisible to a filtered one. That is the honest
+    # behaviour — we genuinely do not know which venue they came from.
+    ("flow_minutes", "venue", "TEXT NOT NULL DEFAULT ''"),
+)
 
 # Every archive table, in one place: `counts` and `prune_before` both walk
 # this, so a new table joins retention by construction rather than by
@@ -117,7 +128,17 @@ class LensStore:
         self.connection.execute("PRAGMA journal_mode = WAL")
         self.connection.execute("PRAGMA synchronous = NORMAL")
         self.connection.executescript(_SCHEMA)
+        self._migrate()
         self.connection.commit()
+
+    def _migrate(self) -> None:
+        """Add columns that post-date the table's first release."""
+        for table, column, definition in _MIGRATIONS:
+            existing = {row[1] for row in
+                        self.connection.execute(f"PRAGMA table_info({table})")}
+            if column not in existing:
+                self.connection.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def close(self) -> None:
         self.connection.close()
@@ -181,13 +202,14 @@ class LensStore:
         self.connection.commit()
 
     def insert_flow_minute(self, symbol: str, minute_ms: int,
-                           bins: dict[float, list[float]]) -> None:
-        """Archive one completed minute of executed flow: {price_bin:
-        [buy_usd, sell_usd]}. Called once per minute per symbol."""
+                           venues: dict[str, dict[float, list[float]]]) -> None:
+        """Archive one completed minute of executed flow, per venue:
+        {venue: {price_bin: [buy_usd, sell_usd]}}."""
         self.connection.executemany(
-            "INSERT INTO flow_minutes (ts, symbol, price_bin, buy_usd, sell_usd)"
-            " VALUES (?, ?, ?, ?, ?)",
-            [(minute_ms, symbol, price_bin, round(buy, 2), round(sell, 2))
+            "INSERT INTO flow_minutes (ts, symbol, venue, price_bin, buy_usd,"
+            " sell_usd) VALUES (?, ?, ?, ?, ?, ?)",
+            [(minute_ms, symbol, venue, price_bin, round(buy, 2), round(sell, 2))
+             for venue, bins in venues.items()
              for price_bin, (buy, sell) in bins.items()],
         )
         self.connection.commit()
@@ -242,13 +264,32 @@ class LensStore:
         ).fetchall()
 
     def flow_minutes_since(self, symbol: str, start_ms: int) -> list[tuple]:
-        """(ts_ms, price_bin, buy_usd, sell_usd) from `start_ms`, oldest
-        first — the CVD series and volume profile are both folded from this."""
+        """(ts_ms, venue, price_bin, buy_usd, sell_usd) from `start_ms`,
+        oldest first — the CVD series and volume profile fold from this."""
         return self.connection.execute(
-            "SELECT ts, price_bin, buy_usd, sell_usd FROM flow_minutes"
+            "SELECT ts, venue, price_bin, buy_usd, sell_usd FROM flow_minutes"
             " WHERE symbol = ? AND ts >= ? ORDER BY ts",
             (symbol, start_ms),
         ).fetchall()
+
+    def cvd_series(self, symbol: str, start_ms: int,
+                   venues: list[str] | None = None) -> list[tuple]:
+        """(minute_epoch_seconds, delta_usd) summed in SQL, optionally for a
+        subset of venues.
+
+        The venue-filtered CVD is computed here rather than held in memory:
+        keeping a per-venue minute series for every symbol would cost
+        roughly a million floats for the multi-venue symbols alone, while
+        this query runs only when someone changes the filter.
+        """
+        sql = ("SELECT ts / 60000 * 60, SUM(buy_usd - sell_usd) FROM flow_minutes"
+               " WHERE symbol = ? AND ts >= ?")
+        params: list = [symbol, start_ms]
+        if venues:
+            sql += f" AND venue IN ({','.join('?' * len(venues))})"
+            params.extend(venues)
+        sql += " GROUP BY 1 ORDER BY 1"
+        return self.connection.execute(sql, params).fetchall()
 
     def counts(self) -> dict[str, int]:
         return {

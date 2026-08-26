@@ -137,22 +137,76 @@ def test_apply_retention_rejects_unknown_table(store):
 
 
 def test_flow_minute_round_trip_and_ordering(store):
-    store.insert_flow_minute("BTC", 120_000, {79_000.0: [5_000.0, 1_000.0],
-                                              79_010.0: [0.0, 2_500.567]})
-    store.insert_flow_minute("BTC", 60_000, {79_000.0: [100.0, 0.0]})
-    store.insert_flow_minute("ETH", 60_000, {4_000.0: [7.0, 8.0]})
+    store.insert_flow_minute("BTC", 120_000, {
+        "binance": {79_000.0: [5_000.0, 1_000.0], 79_010.0: [0.0, 2_500.567]}})
+    store.insert_flow_minute("BTC", 60_000, {"okx": {79_000.0: [100.0, 0.0]}})
+    store.insert_flow_minute("ETH", 60_000, {"binance": {4_000.0: [7.0, 8.0]}})
     rows = store.flow_minutes_since("BTC", 0)
     assert [row[0] for row in rows] == [60_000, 120_000, 120_000]
-    assert (120_000, 79_010.0, 0.0, 2_500.57) in rows
+    assert (120_000, "binance", 79_010.0, 0.0, 2_500.57) in rows
     assert store.flow_minutes_since("BTC", 120_000) == [
-        (120_000, 79_000.0, 5_000.0, 1_000.0),
-        (120_000, 79_010.0, 0.0, 2_500.57),
+        (120_000, "binance", 79_000.0, 5_000.0, 1_000.0),
+        (120_000, "binance", 79_010.0, 0.0, 2_500.57),
     ]
 
 
 def test_flow_minute_empty_bins_writes_nothing(store):
     store.insert_flow_minute("BTC", 60_000, {})
+    store.insert_flow_minute("BTC", 60_000, {"binance": {}})
     assert store.counts()["flow_minutes"] == 0
+
+
+def test_cvd_series_sums_per_minute_across_venues(store):
+    store.insert_flow_minute("BTC", 60_000, {
+        "binance": {79_000.0: [5_000.0, 1_000.0]},
+        "okx": {79_010.0: [500.0, 2_000.0]},
+    })
+    store.insert_flow_minute("BTC", 120_000, {"binance": {79_000.0: [0.0, 300.0]}})
+    # Minute 60: (5000-1000) + (500-2000) = 2500. Minute 120: -300.
+    assert store.cvd_series("BTC", 0) == [(60, 2_500.0), (120, -300.0)]
+
+
+def test_cvd_series_filters_by_venue(store):
+    store.insert_flow_minute("BTC", 60_000, {
+        "binance": {79_000.0: [5_000.0, 1_000.0]},
+        "okx": {79_010.0: [500.0, 2_000.0]},
+    })
+    assert store.cvd_series("BTC", 0, ["binance"]) == [(60, 4_000.0)]
+    assert store.cvd_series("BTC", 0, ["okx"]) == [(60, -1_500.0)]
+    assert store.cvd_series("BTC", 0, ["binance", "okx"]) == [(60, 2_500.0)]
+    assert store.cvd_series("BTC", 0, ["nope"]) == []
+
+
+def test_cvd_series_honours_the_start_bound(store):
+    store.insert_flow_minute("BTC", 60_000, {"binance": {79_000.0: [1.0, 0.0]}})
+    store.insert_flow_minute("BTC", 120_000, {"binance": {79_000.0: [2.0, 0.0]}})
+    assert store.cvd_series("BTC", 120_000) == [(120, 2.0)]
+
+
+def test_venue_column_is_added_to_a_pre_existing_table(tmp_path):
+    """The archive predates venue attribution; opening an old database must
+    migrate it rather than fail or silently ignore the column."""
+    import sqlite3
+    path = tmp_path / "old.db"
+    legacy = sqlite3.connect(path)
+    legacy.execute(
+        "CREATE TABLE flow_minutes (ts INTEGER NOT NULL, symbol TEXT NOT NULL,"
+        " price_bin REAL NOT NULL, buy_usd REAL NOT NULL, sell_usd REAL NOT NULL)")
+    legacy.execute("INSERT INTO flow_minutes VALUES (60000, 'BTC', 79000.0, 9.0, 1.0)")
+    legacy.commit()
+    legacy.close()
+
+    store = LensStore(path)
+    try:
+        # The old row survives, unattributed, and still counts unfiltered.
+        assert store.cvd_series("BTC", 0) == [(60, 8.0)]
+        # It is invisible to a filtered total: we do not know its venue, and
+        # assigning it to one would be a guess.
+        assert store.cvd_series("BTC", 0, ["binance"]) == []
+        store.insert_flow_minute("BTC", 120_000, {"binance": {79_000.0: [3.0, 0.0]}})
+        assert store.cvd_series("BTC", 0, ["binance"]) == [(120, 3.0)]
+    finally:
+        store.close()
 
 
 # ---------------------------------------------------- OI observations (liq map)
