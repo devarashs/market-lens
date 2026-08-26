@@ -40,3 +40,26 @@ def test_aggregate_handles_empty_and_one_sided_books():
     one_sided = aggregate_books([{"bids": [[10.0, 1.0]], "asks": []}], 1.0, 5)
     assert one_sided["mid"] is None
     assert one_sided["bids"] == [[10.0, 10.0]]
+
+
+# ---------------------------------------------- heat ring archive rebuild
+
+
+def test_heat_columns_from_archive_groups_by_snapshot():
+    from market_lens.aggregate import heat_columns_from_archive
+    rows = [
+        (10_000, "bid", 79_000.0, 1_000_000.0),
+        (10_000, "bid", 78_990.0, 500_000.0),
+        (10_000, "ask", 79_010.0, 800_000.0),
+        (40_000, "ask", 79_020.0, 900_000.0),
+    ]
+    columns = heat_columns_from_archive(rows)
+    assert len(columns) == 2
+    ts, bids, asks = columns[0]
+    assert ts == 10 and len(bids) == 2 and asks == [[79_010.0, 800_000.0]]
+    assert columns[1] == [40, [], [[79_020.0, 900_000.0]]]
+
+
+def test_heat_columns_from_archive_empty():
+    from market_lens.aggregate import heat_columns_from_archive
+    assert heat_columns_from_archive([]) == []

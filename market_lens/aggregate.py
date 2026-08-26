@@ -74,3 +74,21 @@ def top_walls(profile: dict, count: int = 4) -> dict:
         "bids": sorted(profile["bids"], key=lambda pv: -pv[1])[:count],
         "asks": sorted(profile["asks"], key=lambda pv: -pv[1])[:count],
     }
+
+
+def heat_columns_from_archive(rows: list[tuple]) -> list[list]:
+    """Rebuild heat-ring columns from archived depth rows.
+
+    `rows`: (ts_ms, side, price_bin, notional_usd) time-ordered, as
+    LensStore.depth_range returns them. One archive snapshot (identical
+    ts) becomes one ring column [ts_seconds, bids, asks]. Archive cadence
+    is 30s vs the live ring's 10s and 25 bins vs 40 — a slightly coarser
+    but honest reconstruction; live columns replace it within the hour.
+    """
+    columns: list[list] = []
+    for ts_ms, side, price_bin, notional_usd in rows:
+        ts_s = int(ts_ms / 1000)
+        if not columns or columns[-1][0] != ts_s:
+            columns.append([ts_s, [], []])
+        columns[-1][1 if side == "bid" else 2].append([price_bin, notional_usd])
+    return columns

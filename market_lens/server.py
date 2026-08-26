@@ -30,7 +30,13 @@ from collections import defaultdict, deque
 
 from aiohttp import ClientSession, WSMsgType, web
 
-from market_lens.aggregate import aggregate_books, bin_price, book_imbalance, top_walls
+from market_lens.aggregate import (
+    aggregate_books,
+    bin_price,
+    book_imbalance,
+    heat_columns_from_archive,
+    top_walls,
+)
 from market_lens.signals import book_signal, combined_signal, tape_signal
 from market_lens.config import (
     BINANCE_REST,
@@ -571,7 +577,24 @@ def build_app() -> web.Application:
     return app
 
 
+def seed_heat_rings() -> None:
+    """Rebuild each symbol's heat ring from the archive's last hour, so a
+    restart no longer blanks the heatmap (Arash, 2026-08-26: "can we save
+    data of it and rebuild it?"). The archive kept recording through every
+    restart; this is the missing read-back."""
+    now_ms = int(time.time() * 1000)
+    for symbol, accumulator in STATE.accumulators.items():
+        rows = STORE.depth_range(symbol, now_ms - 3_600_000, now_ms)
+        for column in heat_columns_from_archive(rows):
+            accumulator.heat.append(column)
+        if rows:
+            span_min = (rows[-1][0] - rows[0][0]) / 60_000
+            print(f"heat ring seeded: {symbol} {len(accumulator.heat)} cols "
+                  f"({span_min:.0f} min from archive)", flush=True)
+
+
 async def main_async() -> None:
+    seed_heat_rings()
     for task in (binance_adapter(STATE.on_book, STATE.on_trade),
                  hyperliquid_adapter(STATE.on_book, STATE.on_trade),
                  bybit_adapter(STATE.on_book, STATE.on_trade),
