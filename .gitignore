@@ -7,6 +7,7 @@ __pycache__/
 # Recorded market data — the archive lives on disk, not in git
 data_recorded/
 
-# Frontend build tooling
+# Frontend build tooling. NOTE: app/dist is COMMITTED on purpose — it is
+# the deploy artifact; the VPS pulls it and never needs Node (rebuild with
+# `cd app && npm run build` before committing UI changes).
 app/node_modules/
-app/dist/

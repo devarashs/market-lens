@@ -15,6 +15,7 @@ snapshots natively.
 from __future__ import annotations
 
 import asyncio
+import heapq
 import json
 import time
 
@@ -32,6 +33,11 @@ from market_lens.config import (
 
 RECONNECT_SECONDS = 5
 BOOK_EMIT_LEVELS = 400  # top-N per side handed to the aggregator
+# Emitting costs a partial sort of the book; consumers read at the 0.4s
+# broadcast cadence, so per-delta emits were pure waste — and on the
+# 1-vCPU VPS, Coinbase's full-book feed (10k+ levels, many deltas/sec)
+# pinned the core doing exactly that (py-spy, 2026-08-26).
+EMIT_MIN_INTERVAL_SECONDS = 0.25
 
 
 class DeltaBook:
@@ -60,10 +66,25 @@ class DeltaBook:
                     side[price] = size
 
     def emit(self) -> dict:
+        # Partial sort: top-N of a 20k-level book is O(n log N), not
+        # O(n log n) — the difference between 3ms and 40ms on one vCPU.
         return {
-            "bids": sorted(self.bids.items(), key=lambda kv: -kv[0])[:BOOK_EMIT_LEVELS],
-            "asks": sorted(self.asks.items(), key=lambda kv: kv[0])[:BOOK_EMIT_LEVELS],
+            "bids": heapq.nlargest(BOOK_EMIT_LEVELS, self.bids.items(),
+                                   key=lambda kv: kv[0]),
+            "asks": heapq.nsmallest(BOOK_EMIT_LEVELS, self.asks.items(),
+                                    key=lambda kv: kv[0]),
         }
+
+    def maybe_emit(self) -> dict | None:
+        """Rate-limited emit for per-delta adapters: the book dict is
+        always current, but a sorted snapshot is produced at most every
+        EMIT_MIN_INTERVAL_SECONDS. None = updated, nothing to publish."""
+        now = time.monotonic()
+        last = getattr(self, "_last_emit", 0.0)
+        if now - last < EMIT_MIN_INTERVAL_SECONDS:
+            return None
+        self._last_emit = now
+        return self.emit()
 
 
 def _log(message: str) -> None:
@@ -259,7 +280,9 @@ async def _bybit_engine(on_book, on_trade, url: str, venue: str) -> None:
                                 book.snapshot(data.get("b", []), data.get("a", []))
                             else:
                                 book.delta(data.get("b", []), data.get("a", []))
-                            on_book(venue, key, book.emit())
+                            payload = book.maybe_emit()
+                            if payload is not None:
+                                on_book(venue, key, payload)
                         elif topic.startswith("publicTrade.") and isinstance(data, list):
                             key = symbol_to_key.get(topic.rsplit(".", 1)[-1])
                             if key is None:
@@ -333,7 +356,9 @@ async def _okx_engine(on_book, on_trade, inst_to_key: dict, venue: str) -> None:
                                 book.snapshot(bids, asks)
                             else:
                                 book.delta(bids, asks)
-                            on_book(venue, key, book.emit())
+                            payload = book.maybe_emit()
+                            if payload is not None:
+                                on_book(venue, key, payload)
                         elif channel == "trades":
                             for trade in data:
                                 price, size = float(trade["px"]), float(trade["sz"])
@@ -411,14 +436,16 @@ async def coinbase_adapter(on_book, on_trade) -> None:
                     if kind == "snapshot":
                         books[product].snapshot(message.get("bids", []),
                                                 message.get("asks", []))
-                        on_book("coinbase", key, books[product].emit())
+                        on_book("coinbase", key, books[product].emit())  # first snapshot: always
                     elif kind == "l2update":
                         bids = [[p, s] for side, p, s in message.get("changes", [])
                                 if side == "buy"]
                         asks = [[p, s] for side, p, s in message.get("changes", [])
                                 if side == "sell"]
                         books[product].delta(bids, asks)
-                        on_book("coinbase", key, books[product].emit())
+                        payload = books[product].maybe_emit()
+                        if payload is not None:
+                            on_book("coinbase", key, payload)
                     elif kind == "match":
                         price = float(message["price"])
                         size = float(message["size"])
@@ -469,7 +496,10 @@ async def kraken_adapter(on_book, on_trade) -> None:
                             else:
                                 book.delta(rows(entry.get("bids", [])),
                                            rows(entry.get("asks", [])))
-                            on_book("kraken", key, book.emit())
+                            payload = (book.emit() if message.get("type") == "snapshot"
+                                       else book.maybe_emit())
+                            if payload is not None:
+                                on_book("kraken", key, payload)
                     elif channel == "trade":
                         for trade in message.get("data", []):
                             key = symbol_to_key.get(trade.get("symbol"))
