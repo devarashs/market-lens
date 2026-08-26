@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+
+from market_lens import fastjson
 import time
 from collections import defaultdict, deque
 
@@ -159,7 +161,7 @@ class LensState:
         self.accumulators[symbol].recent_trades.append(payload)
         if trade["notional"] >= threshold:
             STORE.insert_trade(symbol, venue, trade)
-        message = json.dumps({"type": "trade", **payload})
+        message = fastjson.dumps_str({"type": "trade", **payload})
         for ws, sub in list(self.clients.items()):
             if sub["symbol"] == symbol and not ws.closed:
                 asyncio.ensure_future(ws.send_str(message))
@@ -168,7 +170,7 @@ class LensState:
         """A real forced liquidation: archive it (facts the estimator will
         be judged against) and push it to subscribed clients."""
         STORE.insert_liquidation(symbol, venue, liq)
-        message = json.dumps({"type": "liq", "symbol": symbol,
+        message = fastjson.dumps_str({"type": "liq", "symbol": symbol,
                               "venue": venue, **liq})
         for ws, sub in list(self.clients.items()):
             if sub["symbol"] == symbol and not ws.closed:
@@ -312,7 +314,7 @@ async def metrics_poll() -> None:
                                                 entry["change24h"] = round(
                                                     (float(day["c"]) / open_price - 1) * 100, 2)
                 STATE.metrics = metrics
-                message = json.dumps({"type": "metrics", "data": metrics})
+                message = fastjson.dumps_str({"type": "metrics", "data": metrics})
                 for ws in list(STATE.clients):
                     if not ws.closed:
                         await ws.send_str(message)
@@ -353,7 +355,7 @@ async def liquidation_estimator_poll() -> None:
                     for ts, side, n in accumulator.pressure if ts >= now - LIQ_POLL_SECONDS)
                 accumulator.liq_estimator.observe(
                     int(now * 1000), price, oi_usd, taker_delta)
-                message = json.dumps({"type": "liqmap", "symbol": key,
+                message = fastjson.dumps_str({"type": "liqmap", "symbol": key,
                                       "bands": accumulator.liq_estimator.bands()})
                 for ws, sub in list(STATE.clients.items()):
                     if sub["symbol"] == key and not ws.closed:
@@ -373,7 +375,7 @@ async def heat_ring_loop() -> None:
             profile = aggregate_books(books, spec.price_bin, HEAT_BINS_PER_SIDE)
             column = [now_s, profile["bids"], profile["asks"]]
             STATE.accumulators[symbol].heat.append(column)
-            message = json.dumps({"type": "heatcol", "symbol": symbol, "col": column})
+            message = fastjson.dumps_str({"type": "heatcol", "symbol": symbol, "col": column})
             for ws, sub in list(STATE.clients.items()):
                 if sub["symbol"] == symbol and not ws.closed:
                     await ws.send_str(message)
@@ -454,7 +456,7 @@ async def broadcast_depth_loop() -> None:
                                accumulator.cvd_minutes)
             book = book_signal(imbalance, attributed_walls, profile["mid"],
                                list(accumulator.heat), effective_bin)
-            message = json.dumps({
+            message = fastjson.dumps_str({
                 "type": "depth", "symbol": symbol,
                 "venues": STATE.venues_for(symbol),
                 "activeVenues": venues or STATE.venues_for(symbol),
@@ -553,18 +555,18 @@ async def send_symbol_seed(ws: web.WebSocketResponse, symbol: str) -> None:
             seen.add(key)
             merged.append(trade)
     merged.sort(key=lambda t: t["ts"])
-    await ws.send_str(json.dumps({"type": "tapeHistory", "symbol": symbol,
+    await ws.send_str(fastjson.dumps_str({"type": "tapeHistory", "symbol": symbol,
                                   "trades": merged[-600:]}))
-    await ws.send_str(json.dumps({"type": "heat", "symbol": symbol,
+    await ws.send_str(fastjson.dumps_str({"type": "heat", "symbol": symbol,
                                   "cols": list(accumulator.heat)}))
-    await ws.send_str(json.dumps({"type": "cvd", "symbol": symbol,
+    await ws.send_str(fastjson.dumps_str({"type": "cvd", "symbol": symbol,
                                   "points": accumulator.cvd_points()}))
-    await ws.send_str(json.dumps({"type": "liqHistory", "symbol": symbol,
+    await ws.send_str(fastjson.dumps_str({"type": "liqHistory", "symbol": symbol,
                                   "events": STORE.recent_liquidations(symbol, 300)}))
-    await ws.send_str(json.dumps({"type": "liqmap", "symbol": symbol,
+    await ws.send_str(fastjson.dumps_str({"type": "liqmap", "symbol": symbol,
                                   "bands": accumulator.liq_estimator.bands()}))
     if STATE.metrics:
-        await ws.send_str(json.dumps({"type": "metrics", "data": STATE.metrics}))
+        await ws.send_str(fastjson.dumps_str({"type": "metrics", "data": STATE.metrics}))
 
 
 async def ws_handler(request: web.Request) -> web.WebSocketResponse:
@@ -576,7 +578,7 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
             if message.type != WSMsgType.TEXT:
                 continue
             try:
-                command = json.loads(message.data)
+                command = fastjson.loads(message.data)
             except ValueError:
                 continue
             if command.get("cmd") == "subscribe" and command.get("symbol") in SYMBOLS:
@@ -677,6 +679,13 @@ async def main_async() -> None:
 
 
 def main() -> None:
+    try:
+        # ~2x event-loop throughput on Linux; unavailable on Windows, where
+        # the stdlib loop is fine for a dev instance.
+        import uvloop
+        uvloop.install()
+    except ImportError:
+        pass
     try:
         asyncio.run(main_async())
     except KeyboardInterrupt:

@@ -17,6 +17,8 @@ from __future__ import annotations
 import asyncio
 import heapq
 import json
+
+from market_lens import fastjson
 import time
 
 import websockets
@@ -114,7 +116,7 @@ async def binance_adapter(on_book, on_trade) -> None:
             async with websockets.connect(url, ping_interval=20, max_size=2**22) as ws:
                 _log("binance: connected")
                 async for raw in ws:
-                    message = json.loads(raw)
+                    message = fastjson.loads(raw)
                     stream = message.get("stream", "")
                     data = message.get("data", {})
                     key = stream_to_key.get(stream.split("@")[0])
@@ -155,7 +157,7 @@ async def binance_liquidation_adapter(on_liquidation) -> None:
             async with websockets.connect(url, ping_interval=20, max_size=2**20) as ws:
                 _log("binance-futures: liquidation stream connected")
                 async for raw in ws:
-                    message = json.loads(raw)
+                    message = fastjson.loads(raw)
                     key = stream_to_key.get(message.get("stream", "").split("@")[0])
                     order = message.get("data", {}).get("o", {})
                     if key is None or not order:
@@ -188,7 +190,7 @@ async def hyperliquid_adapter(on_book, on_trade) -> None:
                                           max_size=2**22) as ws:
                 for coin in coin_to_key:
                     for channel in ("l2Book", "trades"):
-                        await ws.send(json.dumps({
+                        await ws.send(fastjson.dumps_str({
                             "method": "subscribe",
                             "subscription": {"type": channel, "coin": coin},
                         }))
@@ -197,12 +199,12 @@ async def hyperliquid_adapter(on_book, on_trade) -> None:
                 async def keepalive() -> None:
                     while True:
                         await asyncio.sleep(45)
-                        await ws.send(json.dumps({"method": "ping"}))
+                        await ws.send(fastjson.dumps_str({"method": "ping"}))
 
                 ping_task = asyncio.create_task(keepalive())
                 try:
                     async for raw in ws:
-                        message = json.loads(raw)
+                        message = fastjson.loads(raw)
                         channel = message.get("channel")
                         data = message.get("data")
                         if channel == "l2Book" and isinstance(data, dict):
@@ -256,18 +258,18 @@ async def _bybit_engine(on_book, on_trade, url: str, venue: str) -> None:
         try:
             async with websockets.connect(url, ping_interval=None,
                                           max_size=2**22) as ws:
-                await ws.send(json.dumps({"op": "subscribe", "args": args}))
+                await ws.send(fastjson.dumps_str({"op": "subscribe", "args": args}))
                 _log(f"{venue}: connected + subscribed")
 
                 async def keepalive() -> None:
                     while True:
                         await asyncio.sleep(20)
-                        await ws.send(json.dumps({"op": "ping"}))
+                        await ws.send(fastjson.dumps_str({"op": "ping"}))
 
                 ping_task = asyncio.create_task(keepalive())
                 try:
                     async for raw in ws:
-                        message = json.loads(raw)
+                        message = fastjson.loads(raw)
                         topic = message.get("topic", "")
                         data = message.get("data")
                         if topic.startswith("orderbook."):
@@ -326,7 +328,7 @@ async def _okx_engine(on_book, on_trade, inst_to_key: dict, venue: str) -> None:
         try:
             async with websockets.connect(OKX_WS, ping_interval=None,
                                           max_size=2**22) as ws:
-                await ws.send(json.dumps({"op": "subscribe", "args": args}))
+                await ws.send(fastjson.dumps_str({"op": "subscribe", "args": args}))
                 _log(f"{venue}: connected + subscribed")
 
                 async def keepalive() -> None:
@@ -339,7 +341,7 @@ async def _okx_engine(on_book, on_trade, inst_to_key: dict, venue: str) -> None:
                     async for raw in ws:
                         if raw == "pong":
                             continue
-                        message = json.loads(raw)
+                        message = fastjson.loads(raw)
                         channel = message.get("arg", {}).get("channel")
                         inst = message.get("arg", {}).get("instId")
                         data = message.get("data")
@@ -389,7 +391,7 @@ async def binance_futures_trades_adapter(on_trade) -> None:
             async with websockets.connect(url, ping_interval=20, max_size=2**22) as ws:
                 _log("binance-fut: trade stream connected")
                 async for raw in ws:
-                    message = json.loads(raw)
+                    message = fastjson.loads(raw)
                     data = message.get("data", {})
                     key = stream_to_key.get(message.get("stream", "").split("@")[0])
                     if key is None:
@@ -418,14 +420,14 @@ async def coinbase_adapter(on_book, on_trade) -> None:
         try:
             async with websockets.connect(COINBASE_WS, ping_interval=20,
                                           max_size=2**23) as ws:
-                await ws.send(json.dumps({
+                await ws.send(fastjson.dumps_str({
                     "type": "subscribe",
                     "product_ids": list(product_to_key),
                     "channels": ["level2_batch", "matches"],
                 }))
                 _log("coinbase: connected + subscribed")
                 async for raw in ws:
-                    message = json.loads(raw)
+                    message = fastjson.loads(raw)
                     kind = message.get("type")
                     product = message.get("product_id")
                     key = product_to_key.get(product)
@@ -474,14 +476,14 @@ async def kraken_adapter(on_book, on_trade) -> None:
             async with websockets.connect(KRAKEN_WS, ping_interval=20,
                                           max_size=2**23) as ws:
                 for channel, extra in (("book", {"depth": 500}), ("trade", {})):
-                    await ws.send(json.dumps({
+                    await ws.send(fastjson.dumps_str({
                         "method": "subscribe",
                         "params": {"channel": channel,
                                    "symbol": list(symbol_to_key), **extra},
                     }))
                 _log("kraken: connected + subscribed")
                 async for raw in ws:
-                    message = json.loads(raw)
+                    message = fastjson.loads(raw)
                     channel = message.get("channel")
                     if channel == "book":
                         for entry in message.get("data", []):
