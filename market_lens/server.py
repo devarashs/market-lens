@@ -543,7 +543,7 @@ async def _backfill_cvd_once() -> None:
             gross_rows = STORE.flow_minutes_since(
                 key, int((now - CVD_BACKFILL_DAYS * 86_400) * 1000))
             ours: dict[int, float] = defaultdict(float)
-            for ts_ms, _price_bin, buy_usd, sell_usd in gross_rows:
+            for ts_ms, _venue, _price_bin, buy_usd, sell_usd in gross_rows:
                 ours[ts_ms // 60_000 * 60] += buy_usd + sell_usd
             overlap_ours = overlap_theirs = 0.0
             overlap_minutes = 0
