@@ -1,6 +1,11 @@
 import { MAX_TAPE_ROWS } from "../lib/config";
 import { formatUsd, formatUtcTime } from "../lib/format";
+import type { LiqEvent, Trade } from "../lib/types";
 import { currentThreshold, useLensStore } from "../store/lens";
+
+type TapeRow =
+  | { kind: "trade"; ts: number; trade: Trade }
+  | { kind: "liq"; ts: number; liq: LiqEvent };
 
 function WallsTable() {
   const depth = useLensStore((s) => s.depth);
@@ -39,15 +44,20 @@ function WallsTable() {
 
 export function TapePanel() {
   const trades = useLensStore((s) => s.trades);
+  const liqs = useLensStore((s) => s.liqs);
   const symbol = useLensStore((s) => s.symbol);
   const thresholdMult = useLensStore((s) => s.thresholdMult);
   const setThresholdMult = useLensStore((s) => s.setThresholdMult);
   const threshold = currentThreshold({ symbol, thresholdMult });
 
-  const rows = trades
-    .filter((trade) => trade.notional >= threshold)
-    .slice(-MAX_TAPE_ROWS)
-    .reverse();
+  // One column, both kinds (aggr.trade-style): trades and forced
+  // liquidations interleaved by time, same threshold gate.
+  const rows: TapeRow[] = [
+    ...trades.filter((trade) => trade.notional >= threshold)
+      .map((trade): TapeRow => ({ kind: "trade", ts: trade.ts, trade })),
+    ...liqs.filter((liq) => liq.notional >= threshold)
+      .map((liq): TapeRow => ({ kind: "liq", ts: liq.ts, liq })),
+  ].sort((a, b) => a.ts - b.ts).slice(-MAX_TAPE_ROWS).reverse();
 
   return (
     <aside className="tape" aria-label="Market structure panel">
@@ -63,11 +73,20 @@ export function TapePanel() {
         onChange={(event) => setThresholdMult(parseFloat(event.target.value))}
       />
       <ul id="tape-list">
-        {rows.map((trade) => (
-          <li key={`${trade.ts}-${trade.price}-${trade.size}`} className={trade.side}>
-            <span>{trade.side === "buy" ? "▲" : "▼"} ${formatUsd(trade.notional)}</span>
+        {rows.map((row) => row.kind === "trade" ? (
+          <li key={`t-${row.trade.ts}-${row.trade.price}-${row.trade.size}`}
+              className={row.trade.side}>
+            <span>{row.trade.side === "buy" ? "▲" : "▼"} ${formatUsd(row.trade.notional)}</span>
             <span className="px">
-              {trade.price.toLocaleString()} · {trade.venue} · {formatUtcTime(trade.ts)}
+              {row.trade.price.toLocaleString()} · {row.trade.venue} · {formatUtcTime(row.trade.ts)}
+            </span>
+          </li>
+        ) : (
+          <li key={`l-${row.liq.ts}-${row.liq.price}-${row.liq.size}`}
+              className={`liq-${row.liq.side}`}>
+            <span>✕ ${formatUsd(row.liq.notional)} {row.liq.side} liq</span>
+            <span className="px">
+              {row.liq.price.toLocaleString()} · {row.liq.venue} · {formatUtcTime(row.liq.ts)}
             </span>
           </li>
         ))}

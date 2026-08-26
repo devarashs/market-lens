@@ -128,7 +128,14 @@ and pure facts, no book claims involved.</p>`,
 $25K, HYPE $10K) appear twice: in the side tape (side, size, price, venue,
 time) and on the chart as <b>short bright dashes at the actual fill
 price</b> — length and thickness grow with size; monsters (≥5× threshold)
-get a printed label and, if enabled, a sound (higher pitch = buy).</p>
+get a printed label.</p>
+<p><b>Sound</b> (footer toggle): the tape plays, aggr.trade-style —
+every above-threshold trade rings a pentatonic note (never dissonant, even
+overlapping): buys chime a sine an octave above sells' triangle, and bigger
+prints sit <i>lower</i>, ring longer, and play louder, so you can read the
+flow's size and side with your eyes elsewhere. Forced liquidations wail: a
+sawtooth glide, downward when longs die, upward when shorts do.
+Rate-limited to 8 sounds/s; silent in hidden tabs.</p>
 <p>The slider re-filters both views from ×0.1 to ×4 of the base threshold
 (default ×0.5), retroactively. The server forwards flow from 10% of the
 threshold so the chart carries aggregated-trade texture, not just whales;
@@ -158,7 +165,9 @@ size almost always sits close to price.</p>`,
 forced liquidation from Binance's public <code>forceOrder</code> stream
 draws as a violet <b>×</b> at its fill price — magenta when a <i>long</i>
 died, blue-violet when a <i>short</i> did; monsters (≥$250K) get a label,
-and the footer shows rolling 1h totals. Every print is archived to
+and the footer shows rolling 1h totals; they also appear inline in the
+Big Trades column as violet ✕ rows, and — with sound on — as directional
+wails. Every print is archived to
 <code>lens.db</code> — this history has no free source and cannot be
 backfilled, so the archive is the moat. (HL-only symbols like HYPE have no
 Binance stream and show none.)</p>

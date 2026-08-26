@@ -20,6 +20,8 @@
   --color-bid: #3fa36c;
   --color-ask: #c4564a;
   --color-gold: #c9a35a;
+  --color-liq-long: #c46fae;
+  --color-liq-short: #8a7ac2;
   --radius-card: 10px;
 }
 
@@ -195,6 +197,8 @@ body { margin: 0; background: var(--bg); color: var(--text);
 }
 #tape-list li.buy  { background: color-mix(in srgb, var(--bid) 14%, transparent); }
 #tape-list li.sell { background: color-mix(in srgb, var(--ask) 14%, transparent); }
+#tape-list li.liq-long  { background: color-mix(in srgb, var(--color-liq-long) 22%, transparent); }
+#tape-list li.liq-short { background: color-mix(in srgb, var(--color-liq-short) 22%, transparent); }
 #tape-list .px { color: var(--muted); }
 .muted { color: var(--muted); }
 .attribution {

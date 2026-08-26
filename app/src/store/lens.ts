@@ -6,7 +6,7 @@
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 
-import { beep } from "../lib/beep";
+import { liquidationParams, playSound, soundParams } from "../lib/audio";
 import {
   BASE_THRESHOLDS,
   MA_DEFS,
@@ -178,8 +178,10 @@ export const useLensStore = create<LensState>()(
           const trades = [...state.trades, message];
           if (trades.length > MAX_TRADES) trades.shift();
           set({ trades });
-          if (state.beepEnabled && message.notional >= currentThreshold(state) * 5) {
-            beep(message.side);
+          // Same gate as the tape list: you hear what you would see.
+          const threshold = currentThreshold(state);
+          if (state.beepEnabled && message.notional >= threshold) {
+            playSound(soundParams(message.side, message.notional / threshold));
           }
           break;
         }
@@ -199,9 +201,14 @@ export const useLensStore = create<LensState>()(
           set({ cvd: message.points });
           break;
         case "liq": {
-          const liqs = [...get().liqs, message];
+          const state = get();
+          const liqs = [...state.liqs, message];
           if (liqs.length > 500) liqs.shift();
           set({ liqs });
+          const threshold = currentThreshold(state);
+          if (state.beepEnabled && message.notional >= threshold) {
+            playSound(liquidationParams(message.side, message.notional / threshold));
+          }
           break;
         }
         case "liqHistory":

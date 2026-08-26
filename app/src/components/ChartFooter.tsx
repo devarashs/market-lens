@@ -117,7 +117,7 @@ export function ChartFooter() {
             type="checkbox"
             checked={beepEnabled}
             onChange={(event) => setBeepEnabled(event.target.checked)}
-          />{" "}monster alert
+          />{" "}sound
         </label>
         <button className="mini-btn" title="Save chart as PNG" onClick={exportChartPng}>
           PNG
