@@ -154,16 +154,16 @@ body { margin: 0; background: var(--bg); color: var(--text);
 /* ------------------------------------------------------------ main layout */
 .layout { display: grid; grid-template-columns: 1fr 290px 250px; flex: 1; min-height: 0; }
 .chart-wrap { position: relative; min-width: 0; background: var(--bg); }
-#chart { position: absolute; inset: 0 0 52px 0; }
+#chart { position: absolute; inset: 0 0 72px 0; }
 #under-overlay {
   /* The CLAIMS layers (heatmap, profile, order lines, depth) paint here —
      underneath the chart's transparent-background canvases — so candles
      always stay crisp on top of them. */
-  position: absolute; inset: 0 0 52px 0; width: 100%;
+  position: absolute; inset: 0 0 72px 0; width: 100%;
   pointer-events: none; z-index: 0;
 }
 #overlay {
-  position: absolute; inset: 0 0 52px 0; width: 100%;
+  position: absolute; inset: 0 0 72px 0; width: 100%;
   pointer-events: none;
   /* Lightweight Charts' internal canvases carry z-index 1 and 2 and the
      chart div does not isolate its stacking context — without beating
@@ -219,11 +219,17 @@ body { margin: 0; background: var(--bg); color: var(--text);
 .candle-countdown.closing b { color: var(--color-gold); }
 
 .chart-footer {
-  position: absolute; left: 0; right: 0; bottom: 0; height: 52px;
+  position: absolute; left: 0; right: 0; bottom: 0; height: 72px;
   display: flex; flex-direction: column; justify-content: center; gap: 2px;
   padding: 0 12px; border-top: 1px solid var(--border); font-size: 11px;
 }
-.footer-row { display: flex; gap: 14px; align-items: center; min-height: 22px; }
+.footer-row {
+  display: flex; gap: 14px; align-items: center; min-height: 22px;
+  /* Wraps rather than overlapping the row below: the gauge row grew a
+     positioning readout and its source picker, and two fixed rows in a
+     52px strip had run out of room. */
+  flex-wrap: wrap; row-gap: 2px;
+}
 .row-label {
   font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em;
 }
