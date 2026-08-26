@@ -225,8 +225,17 @@ size almost always sits close to price.</p>`,
     id: "liquidations",
     title: "Liquidations: real prints & the estimated map",
     body: `
+<p><b>Source note (2026-08-27).</b> This layer was fed from Binance's
+public <code>forceOrder</code> stream, and that stream went silent for
+us: four minutes on the all-market feed with the socket open returned
+zero frames, and the archive held zero rows after a full day of trading.
+It is now fed from <b>OKX</b>, which publishes the same event and is
+demonstrably alive. The Binance adapter stays connected in case it
+returns. If you looked at the liq layer before this date and saw nothing,
+that is why — it was empty by construction, not because markets were
+quiet.</p>
 <p>Two layers, honestly separated. <b>Liq prints (facts)</b>: every real
-forced liquidation from Binance's public <code>forceOrder</code> stream
+forced liquidation from the venue's public stream
 draws as a violet <b>×</b> at its fill price — magenta when a <i>long</i>
 died, blue-violet when a <i>short</i> did; monsters (≥$250K) get a label,
 and the footer shows rolling 1h totals; they also appear inline in the
@@ -259,6 +268,30 @@ tends to accelerate through it (the cascade), and it is a documented
 market habit that price gets drawn toward dense pools. Whether that is
 deliberate hunting or emergent physics, the map shows where the fuel
 sits, and the real prints grade the estimate over time.</p>`,
+  },
+  {
+    id: "symbol-info",
+    title: "Symbol info panel",
+    body: `
+<p>The <b>info</b> button in the header opens reference data for whatever
+symbol you are on: returns over 1h / 24h / 7d / 30d / 90d / 1y, perp
+volume (24h, 7d and 30d daily averages, 30d total), market cap with rank,
+FDV and supply, the range with distance from its high and where price
+sits inside it, 30-day annualised realised volatility, open interest and
+funding — plus 24h liquidation totals and net positioning read straight
+out of our own archive.</p>
+<p>Nearly all of it is computed from candles the collector already
+fetches, which is why it works identically for the equity and commodity
+perps that no crypto data provider covers. Market cap is the exception —
+it needs a circulating supply — and comes from CoinGecko for the coins.</p>
+<p>Two places the panel refuses to invent a number. A window longer than
+the symbol's history reads blank: the <code>xyz</code> equity dex is
+about nine months old, so NVDA has no one-year return, and measuring one
+from the oldest candle available would quietly mean something else. And
+the equity perps have <b>no market cap at all</b> — no issuer, no float,
+no supply. The panel says so rather than borrowing the underlying
+company's figure, which describes a different instrument on a different
+exchange.</p>`,
   },
   {
     id: "gauges",

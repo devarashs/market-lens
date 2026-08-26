@@ -94,6 +94,18 @@ nothing Done unverified).
       the Bitfinex margin book, normalised to a -100..+100 lean on its own
       chart scale, with a source picker. Both APIs serve only a trailing
       window, so every reading is archived — 42.5k rows in the first pass.
+- [x] **Symbol info panel** (2026-08-27): returns/volume/range/volatility
+      computed from candles (so it covers the equity perps too), market
+      cap + supply from CoinGecko for the coins, OI/funding, and 24h
+      liquidations + net positioning from our own archive. Blank where
+      history is too short or the instrument has no float — stated, not
+      approximated.
+- [x] **Liquidation feed moved to OKX** (2026-08-27). Binance's
+      `forceOrder` stream had gone silent: 4 minutes on the all-market
+      feed, socket open, zero frames, and **zero rows archived in a day**.
+      The "moat" data was recording nothing. OKX publishes the same event,
+      is alive, and its contract sizing is applied. *Verified: rows
+      arriving with correct base-unit sizes.*
 - [ ] Positioning as a strategy input — tested under the arena's
       promotion criteria like everything else, never trusted because it
       looks suggestive
