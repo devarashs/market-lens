@@ -94,7 +94,10 @@ bin, big-trade threshold) plus its mirror in <code>app/src/lib/config.ts</code>.
 every 15 seconds so the forming candle stays honest — every 2.5 seconds on
 the <b>1s</b> view. Timeframes: 1s, 1m, 5m, 15m, 1h, 4h, 1d — buttons in
 the header or <b>[</b> / <b>]</b> keys. Seconds are Binance-only, so
-HL-only symbols (HYPE) disable the 1s button.</p>
+HL-only symbols (HYPE) disable the 1s button. A countdown in the chart's
+top-right corner shows how long the open candle has left, turning gold in
+its final ten seconds; boundaries are epoch-aligned (the daily closes at
+00:00 UTC), so it is arithmetic, not a guess.</p>
 <p>Chart styles: candles, Heikin-Ashi, bars, line, area — the picker sits
 next to the timeframes. Charting is TradingView's open-source Lightweight
 Charts library (Apache-2.0, bundled from npm — no CDN dependency).</p>`},{id:"depth",title:"Depth overlay (right edge)",body:`
@@ -181,7 +184,16 @@ flow; liquidation levels project at the standard tiers (5×/10×/25×/50×/
 100× with an assumed mix — no venue publishes the real distribution);
 bands are <i>consumed</i> when price trades through them and decay with a
 24h half-life. Nobody can see actual positions — every liquidation
-heatmap anywhere is this same estimate wearing different clothes.</p>
+heatmap anywhere is this same estimate wearing different clothes. The map
+is binned <i>coarser</i> than the order book (×10 the depth bin) on
+purpose: projecting an assumed leverage mix onto book-fine bins would
+dress an estimate up as a measurement.</p>
+<p><b>It survives restarts.</b> Every open-interest observation is
+archived, and on startup the collector replays the last 48h back through
+the estimator — so a deploy no longer blanks the map. Replay rather than
+snapshot: the estimator is a pure function of its observations, so the
+rebuilt map is the same map, including the bands price traded through
+while the process was down.</p>
 <p>Why it matters: liquidation clusters are <b>fuel on the track</b> —
 forced orders are price-insensitive flow, so price reaching a dense band
 tends to accelerate through it (the cascade), and it is a documented
@@ -251,11 +263,21 @@ anywhere</b> — order-book history is only owned by whoever recorded it,
 which is why the collector should eventually live on an always-on server.
 The recorded trades power the chart's history seeding (an indexed query,
 constant-time however large the archive grows); the depth table will power
-the persistent (multi-day) heatmap. Retention is a
-<code>prune_before(cutoff)</code> call away when disk ever matters —
-measured growth is roughly 20&nbsp;MB/day across all symbols. Upgrading
-from the CSV era: run <code>python scripts/import_csv_archive.py</code>
-once.</p>`},{id:"shortcuts",title:"Shortcuts, preferences, export",body:`
+the persistent (multi-day) heatmap.</p>
+<p>Two further tables exist so that <b>derived state survives a
+restart</b> — before them, the liquidation map, the CVD series and the
+volume profile were memory-only and every deploy blanked them.
+<code>oi_observations</code> keeps the liq map's raw inputs, and
+<code>flow_minutes</code> keeps per-minute executed flow binned by price,
+which folds back into both the CVD and the profile. The full trade stream
+is far too large to archive; its minute aggregate is not.</p>
+<p>Retention now runs on its own loop rather than waiting to be called,
+with a policy set <i>per table</i>: depth snapshots (the bulk of the file)
+age out at 14 days, trades and the derived tables at 90 — and forced
+liquidation prints are <b>never</b> pruned, because no venue sells that
+history back. Measured growth is roughly 20&nbsp;MB/day across all
+symbols. Upgrading from the CSV era: run
+<code>python scripts/import_csv_archive.py</code> once.</p>`},{id:"shortcuts",title:"Shortcuts, preferences, export",body:`
 <p><b>Keyboard</b>: 1–6 symbols · [ and ] timeframe down/up · h heatmap ·
 p volume profile.</p>
 <p><b>Preferences</b> (toggles, threshold slider, chart style, alert)
