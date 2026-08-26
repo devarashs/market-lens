@@ -17,7 +17,10 @@ WEB_DIR = REPO_ROOT / "app" / "dist"
 RECORD_DIR = REPO_ROOT / "data_recorded"
 
 HTTP_PORT = 8899
-DEPTH_BROADCAST_SECONDS = 0.4     # aggregated book push rate to browsers
+# Aggregated book push rate. 1s (was 0.4s): the tape streams per-trade on
+# its own messages so nothing felt slows, and the depth aggregation under
+# this tick is the collector's dominant cost on the 1-vCPU VPS.
+DEPTH_BROADCAST_SECONDS = 1.0
 DEPTH_RECORD_SECONDS = 30         # book snapshot persistence cadence
 # Display window: bins kept nearest the mid, per side. 150 × $10 BTC bins
 # ≈ ±1.9% — the visible depth band. Venue caps beyond our control: Binance
