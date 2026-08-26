@@ -311,15 +311,76 @@ async def okx_adapter(on_book, on_trade) -> None:
                       "okx")
 
 
+OKX_INSTRUMENTS_URL = "https://www.okx.com/api/v5/public/instruments?instType=SWAP"
+
+
+async def _okx_contract_values(instruments: list[str]) -> dict[str, float]:
+    """Base units per contract (`ctVal`) for OKX swaps.
+
+    OKX quotes swap sizes in CONTRACTS, not base currency, and the
+    multiplier differs per instrument: one BTC-USDT-SWAP contract is
+    0.01 BTC, ETH 0.1, SOL 1, DOGE 1000. Taking `sz` for base units
+    overstated BTC and BNB by 100x and ETH by 10x, and understated DOGE
+    by 1000x — which reached the tape as tens of thousands of phantom
+    whale prints and reached the depth aggregate as an OKX wall dwarfing
+    every real one. Found 2026-08-26, when calibrating the CVD backfill
+    put our aggregate at 777x Binance spot for BTC but 12x for SOL — the
+    one symbol whose ctVal happens to be exactly 1.
+    """
+    import aiohttp
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(OKX_INSTRUMENTS_URL, timeout=20) as response:
+            payload = await response.json()
+    return parse_contract_values(payload, instruments)
+
+
+def parse_contract_values(payload: dict, instruments: list[str]) -> dict[str, float]:
+    """Pull `ctVal x ctMult` per instrument out of an OKX instruments
+    response, insisting that every instrument we asked about is present."""
+    wanted = set(instruments)
+    values = {row["instId"]: float(row["ctVal"]) * float(row.get("ctMult") or 1)
+              for row in payload.get("data", [])
+              if row.get("instId") in wanted}
+    missing = [inst for inst in instruments if inst not in values]
+    if missing:
+        # Raising is the point: the caller retries, and a wrong multiplier
+        # is far worse than a venue that is briefly absent.
+        raise RuntimeError(f"ctVal missing for {missing}")
+    return values
+
+
 async def okx_futures_adapter(on_book, on_trade) -> None:
-    """OKX USDT perpetual swaps: same channels, -SWAP instIds, own venue."""
-    await _okx_engine(on_book, on_trade,
-                      {f"{spec.okx}-SWAP": spec.key
-                       for spec in SYMBOLS.values() if spec.okx},
-                      "okx-fut")
+    """OKX USDT perpetual swaps: same channels, -SWAP instIds, own venue.
+
+    Sizes arrive in contracts and are converted to base units before
+    anything leaves this adapter — see `_okx_contract_values`.
+    """
+    inst_to_key = {f"{spec.okx}-SWAP": spec.key
+                   for spec in SYMBOLS.values() if spec.okx}
+    while True:
+        try:
+            multipliers = await _okx_contract_values(list(inst_to_key))
+            break
+        except Exception as error:  # noqa: BLE001 — no data beats wrong data
+            _log(f"okx-fut: contract values unavailable "
+                 f"({error.__class__.__name__}: {error}) — retrying in "
+                 f"{RECONNECT_SECONDS}s")
+            await asyncio.sleep(RECONNECT_SECONDS)
+    _log(f"okx-fut: contract sizes {multipliers}")
+    await _okx_engine(on_book, on_trade, inst_to_key, "okx-fut",
+                      size_multipliers=multipliers)
 
 
-async def _okx_engine(on_book, on_trade, inst_to_key: dict, venue: str) -> None:
+def _scale_levels(rows: list, multiplier: float) -> list:
+    """[px, sz, ...] rows with size converted from contracts to base units."""
+    if multiplier == 1.0:
+        return [row[:2] for row in rows]
+    return [[row[0], float(row[1]) * multiplier] for row in rows]
+
+
+async def _okx_engine(on_book, on_trade, inst_to_key: dict, venue: str,
+                      size_multipliers: dict[str, float] | None = None) -> None:
     args = ([{"channel": "books", "instId": inst} for inst in inst_to_key]
             + [{"channel": "trades", "instId": inst} for inst in inst_to_key])
     books: dict[str, DeltaBook] = {inst: DeltaBook() for inst in inst_to_key}
@@ -348,11 +409,13 @@ async def _okx_engine(on_book, on_trade, inst_to_key: dict, venue: str) -> None:
                         key = inst_to_key.get(inst)
                         if key is None or not data:
                             continue
+                        multiplier = (size_multipliers or {}).get(inst, 1.0)
                         if channel == "books":
                             entry = data[0]
-                            # OKX rows are [px, sz, liquidated, numOrders].
-                            bids = [row[:2] for row in entry.get("bids", [])]
-                            asks = [row[:2] for row in entry.get("asks", [])]
+                            # OKX rows are [px, sz, liquidated, numOrders];
+                            # on swaps `sz` counts contracts, not coins.
+                            bids = _scale_levels(entry.get("bids", []), multiplier)
+                            asks = _scale_levels(entry.get("asks", []), multiplier)
                             book = books[inst]
                             if message.get("action") == "snapshot":
                                 book.snapshot(bids, asks)
@@ -363,7 +426,8 @@ async def _okx_engine(on_book, on_trade, inst_to_key: dict, venue: str) -> None:
                                 on_book(venue, key, payload)
                         elif channel == "trades":
                             for trade in data:
-                                price, size = float(trade["px"]), float(trade["sz"])
+                                price = float(trade["px"])
+                                size = float(trade["sz"]) * multiplier
                                 on_trade(venue, key, {
                                     "price": price, "size": size,
                                     "side": "buy" if trade.get("side") == "buy" else "sell",

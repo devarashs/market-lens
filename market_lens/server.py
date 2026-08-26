@@ -106,6 +106,11 @@ class SymbolAccumulators:
         # write buffer, never a read path.
         self.flow_pending: dict[int, dict[float, list[float]]] = defaultdict(
             lambda: defaultdict(lambda: [0.0, 0.0]))
+        # Minutes in cvd_minutes that came from the kline reconstruction
+        # rather than from recorded flow. Tracked so the backfill can be
+        # recomputed as its calibration improves, without ever disturbing
+        # a minute we actually observed.
+        self.backfilled_minutes: set[int] = set()
         self.heat: deque[list] = deque(maxlen=HEAT_RING_LENGTH)   # [ts, bids, asks]
         # Recent above-floor trades kept in memory for chart seeding — the
         # permanent archive stays whales-only, but the chart wants
@@ -423,6 +428,7 @@ CVD_BACKFILL_DAYS = 14
 # Below this much overlap the volume ratio is noise, so the backfill goes
 # in uncalibrated and says so.
 CVD_CALIBRATION_MIN_MINUTES = 20
+CVD_BACKFILL_REFRESH_SECONDS = 3600
 
 
 def _kline_delta_usd(row: list) -> float:
@@ -454,6 +460,15 @@ async def backfill_cvd() -> None:
     never enters the archive that a future study would read.
     """
     await asyncio.sleep(8)  # let the adapters and seeds settle first
+    while True:
+        await _backfill_cvd_once()
+        # Re-run periodically: the calibration window grows as we record,
+        # so an early pass that had to go in uncalibrated is replaced by a
+        # measured one rather than being stuck at whatever it guessed.
+        await asyncio.sleep(CVD_BACKFILL_REFRESH_SECONDS)
+
+
+async def _backfill_cvd_once() -> None:
     now = time.time()
     start_ms = int((now - CVD_BACKFILL_DAYS * 86_400) * 1000)
     async with ClientSession() as session:
@@ -462,6 +477,11 @@ async def backfill_cvd() -> None:
             if not spec.binance:
                 continue
             accumulator = STATE.accumulators[key]
+            # Drop the previous reconstruction before measuring anything,
+            # so recorded minutes are all that calibration can see.
+            for minute in accumulator.backfilled_minutes:
+                accumulator.cvd_minutes.pop(minute, None)
+            accumulator.backfilled_minutes.clear()
             recorded = dict(accumulator.cvd_minutes)
             try:
                 klines = await _fetch_klines_range(
@@ -500,7 +520,8 @@ async def backfill_cvd() -> None:
                 minute = int(row[0]) // 60_000 * 60
                 if minute in recorded:
                     continue  # our own recording always wins
-                accumulator.cvd_minutes[minute] += _kline_delta_usd(row) * scale
+                accumulator.cvd_minutes[minute] = _kline_delta_usd(row) * scale
+                accumulator.backfilled_minutes.add(minute)
                 added += 1
             if added:
                 span_d = (max(accumulator.cvd_minutes)
