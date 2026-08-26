@@ -8,6 +8,9 @@ export interface Candle {
   high: number;
   low: number;
   close: number;
+  /** Base-asset volume for the bar. Absent on older cached responses, so
+      every consumer treats it as optional. */
+  volume?: number;
 }
 
 export interface Trade {

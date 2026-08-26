@@ -120,12 +120,15 @@ export interface MaDef {
 }
 
 export const MA_DEFS: readonly MaDef[] = [
-  { id: "sma20", label: "S20", kind: "sma", length: 20, color: "#7a9ec2" },
-  { id: "sma50", label: "S50", kind: "sma", length: 50, color: "#c2a97a" },
-  { id: "sma200", label: "S200", kind: "sma", length: 200, color: "#b07ac2" },
-  { id: "ema9", label: "E9", kind: "ema", length: 9, color: "#7ac2b4" },
-  { id: "ema21", label: "E21", kind: "ema", length: 21, color: "#c27a7a" },
-  { id: "ema50", label: "E50", kind: "ema", length: 50, color: "#9ac27a" },
+  { id: "sma20", label: "SMA 20", kind: "sma", length: 20, color: "#7a9ec2" },
+  { id: "sma50", label: "SMA 50", kind: "sma", length: 50, color: "#c2a97a" },
+  { id: "sma100", label: "SMA 100", kind: "sma", length: 100, color: "#8ec2bd" },
+  { id: "sma200", label: "SMA 200", kind: "sma", length: 200, color: "#b07ac2" },
+  { id: "ema9", label: "EMA 9", kind: "ema", length: 9, color: "#7ac2b4" },
+  { id: "ema21", label: "EMA 21", kind: "ema", length: 21, color: "#c27a7a" },
+  { id: "ema50", label: "EMA 50", kind: "ema", length: 50, color: "#9ac27a" },
+  { id: "ema100", label: "EMA 100", kind: "ema", length: 100, color: "#c2b17a" },
+  { id: "ema200", label: "EMA 200", kind: "ema", length: 200, color: "#c27ab0" },
 ];
 
 /** Series + overlay palette (matches the CSS tokens in styles.css). */
@@ -162,3 +165,83 @@ export const POSITIONING_LABELS: Record<string, string> = {
   "top-accounts": "Binance top 20% accounts",
   "global-accounts": "Binance all accounts",
 };
+
+/** Every toggleable chart layer, for the searchable Layers menu. Grouped
+    the way they are read: what price is doing, what is resting in the
+    book, what has actually traded, and the Liquidation Hunter set ported
+    from the Pine indicator of that name. */
+export interface LayerDef {
+  key: string;
+  label: string;
+  group: string;
+  hint?: string;
+}
+
+export const LAYER_DEFS: readonly LayerDef[] = [
+  { key: "candles", label: "Candles", group: "Price" },
+  { key: "levels", label: "Day levels", group: "Price",
+    hint: "prev high/low/close, today's open" },
+  { key: "vwap", label: "VWAP", group: "Price", hint: "session, volume-weighted" },
+  { key: "roundNumbers", label: "Round-number magnets", group: "Price",
+    hint: "levels a crowd fixates on" },
+
+  { key: "depth", label: "Depth bars", group: "Resting claims",
+    hint: "aggregated book at the right edge" },
+  { key: "walls", label: "Order lines", group: "Resting claims",
+    hint: "top walls, from where they appeared" },
+  { key: "heat", label: "Heatmap", group: "Resting claims",
+    hint: "the book through time" },
+  { key: "liqmap", label: "Liq map (measured)", group: "Resting claims",
+    hint: "bands from real open-interest changes" },
+  { key: "liqGrid", label: "Liq grid (anchor)", group: "Resting claims",
+    hint: "leverage tiers off VWAP — the Pine version" },
+
+  { key: "trades", label: "Trade dashes", group: "Executed facts" },
+  { key: "profile", label: "Volume profile", group: "Executed facts" },
+  { key: "poc", label: "POC & value area", group: "Executed facts",
+    hint: "from our own profile, not a candle proxy" },
+  { key: "cvd", label: "CVD", group: "Executed facts",
+    hint: "cumulative volume delta" },
+  { key: "liqs", label: "Liquidation prints", group: "Executed facts",
+    hint: "real forced closes" },
+  { key: "positioning", label: "Net long/short", group: "Executed facts" },
+  { key: "volumeNodes", label: "Volume nodes", group: "Executed facts",
+    hint: "heaviest-traded price levels" },
+
+  { key: "stopClusters", label: "Stop clusters", group: "Liquidation Hunter",
+    hint: "where stops rest beyond swings" },
+  { key: "sweeps", label: "Stop sweeps", group: "Liquidation Hunter",
+    hint: "pierced, then rejected" },
+  { key: "absorption", label: "Absorption", group: "Liquidation Hunter",
+    hint: "heavy volume, tiny body" },
+  { key: "exhaustion", label: "Exhaustion", group: "Liquidation Hunter",
+    hint: "new extreme, momentum fading" },
+  { key: "squeeze", label: "Squeeze regime", group: "Liquidation Hunter",
+    hint: "range compressed, expansion due" },
+  { key: "priceExtreme", label: "Extreme deviation", group: "Liquidation Hunter",
+    hint: "price >2.5σ from its mean" },
+];
+
+/** Tunables for the Liquidation Hunter layers, matching the Pine inputs. */
+export const QLH_SETTINGS = {
+  pivotLeft: 5,
+  pivotRight: 2,
+  stopBufferAtr: 0.3,
+  maxClusters: 8,
+  volumeLookback: 50,
+  volumeZThreshold: 2.0,
+  absorptionMaxBody: 0.25,
+  volumeNodeLookback: 50,
+  volumeNodeCount: 3,
+  sweepMinWick: 0.55,
+  sweepRequireVolume: true,
+  bbLength: 20,
+  kcLength: 20,
+  kcMult: 1.5,
+  easyMoveRatio: 1.15,
+  rsiLength: 14,
+  rocLength: 10,
+  priceExtremeSigma: 2.5,
+  liqGridTiers: [5, 10, 25, 50, 100] as const,
+  liqGridShown: [10, 25, 50] as const,
+} as const;

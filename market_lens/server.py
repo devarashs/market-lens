@@ -1034,7 +1034,12 @@ async def klines_handler(request: web.Request) -> web.Response:
                         return web.json_response([
                             {"time": row[0] // 1000, "open": float(row[1]),
                              "high": float(row[2]), "low": float(row[3]),
-                             "close": float(row[4])}
+                             "close": float(row[4]),
+                             # Volume rides along: the indicator layers
+                             # (z-score, absorption, volume nodes, profile)
+                             # are all volume-weighted and had nothing to
+                             # weight with while /klines dropped it.
+                             "volume": float(row[5])}
                             for row in rows
                         ])
                 except Exception:  # noqa: BLE001 — try the fallback host
@@ -1056,7 +1061,7 @@ async def klines_handler(request: web.Request) -> web.Response:
             return web.json_response([
                 {"time": row["t"] // 1000, "open": float(row["o"]),
                  "high": float(row["h"]), "low": float(row["l"]),
-                 "close": float(row["c"])}
+                 "close": float(row["c"]), "volume": float(row.get("v") or 0)}
                 for row in rows
             ])
 

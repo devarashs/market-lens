@@ -20,16 +20,20 @@ import {
 } from "lightweight-charts";
 import { useEffect, useRef } from "react";
 
-import { COLORS, MA_DEFS, TF_SECONDS, type ChartStyle } from "../lib/config";
+import {
+  COLORS, MA_DEFS, QLH_SETTINGS, TF_SECONDS, type ChartStyle,
+} from "../lib/config";
 import { bucketSeries, computeMa, mergeCandles, styledRows } from "../lib/candles";
 import { pickPositioningMetric } from "../lib/positioning";
 import type { Candle } from "../lib/types";
 import { currentThreshold, useLensStore, type ReadoutData } from "../store/lens";
 import { registerChartExporter } from "./chartExport";
 import {
-  drawBubbles, drawDepth, drawHeat, drawLiqMap, drawLiqPrints, drawProfile,
-  drawWallLines, type DrawEnv,
+  drawBubbles, drawDepth, drawEventMarks, drawHeat, drawLiqGrid, drawLiqMap,
+  drawLiqPrints, drawProfile, drawRegimeTint, drawRoundLevels, drawStopClusters,
+  drawSweeps, drawValueArea, drawVolumeNodes, drawWallLines, type DrawEnv,
 } from "./overlays";
+import { computeHunter, valueAreaFromProfile, type HunterFrame } from "../lib/hunter";
 
 /* The four price-series types expose an identical surface for everything
    we call (setData, applyOptions, price mapping, price lines), so one
@@ -273,6 +277,62 @@ export function LensChart() {
       }
       if (state.layers.liqs && state.liqs.length) {
         drawLiqPrints(env, state.liqs, state.timeframe);
+      }
+      drawHunterLayers(env, state);
+    }
+
+    /* The Liquidation Hunter set. Everything here derives from the candle
+       rows already on screen, so it is recomputed only when those change
+       (see hunterCache) rather than on every animation frame — the pivot
+       and squeeze passes walk the whole series. */
+    let hunterCache: { rows: Candle[]; value: HunterFrame } | null = null;
+
+    function hunterFrame(rows: Candle[]): HunterFrame {
+      if (hunterCache && hunterCache.rows === rows) return hunterCache.value;
+      const value = computeHunter(rows, QLH_SETTINGS);
+      hunterCache = { rows, value };
+      return value;
+    }
+
+    function drawHunterLayers(env: DrawEnv, state: ReturnType<typeof store.getState>): void {
+      const layers = state.layers;
+      const needsHunter = layers.stopClusters || layers.sweeps || layers.absorption
+        || layers.exhaustion || layers.squeeze || layers.priceExtreme
+        || layers.volumeNodes || layers.roundNumbers;
+      const rows = state.candleRows;
+      if (!needsHunter || rows.length === 0) {
+        // The value-area and grid layers do not need the hunter pass.
+        drawStandaloneHunterLayers(env, state);
+        return;
+      }
+      const hunter = hunterFrame(rows);
+      if (layers.squeeze && hunter.squeezeNow) {
+        drawRegimeTint(env, "rgba(201,163,90,0.055)");
+      }
+      if (layers.priceExtreme && hunter.priceExtreme) {
+        drawRegimeTint(env, "rgba(255,60,60,0.05)");
+      }
+      if (layers.roundNumbers) drawRoundLevels(env, hunter.roundLevels);
+      if (layers.volumeNodes) drawVolumeNodes(env, hunter.volumeNodes);
+      if (layers.stopClusters) {
+        drawStopClusters(env, hunter.clusters, rows.map((row) => row.time));
+      }
+      if (layers.sweeps) drawSweeps(env, hunter.sweeps);
+      if (layers.absorption) drawEventMarks(env, hunter.absorptions, "diamond", "201,163,90");
+      if (layers.exhaustion) drawEventMarks(env, hunter.exhaustions, "cross", "255,80,80");
+      drawStandaloneHunterLayers(env, state);
+    }
+
+    function drawStandaloneHunterLayers(
+      env: DrawEnv, state: ReturnType<typeof store.getState>,
+    ): void {
+      // Both of these read our measured data rather than a candle proxy.
+      if (state.layers.liqGrid && state.depth?.vwap) {
+        drawLiqGrid(env, state.depth.vwap, QLH_SETTINGS.liqGridShown);
+      }
+      if (state.layers.poc && state.depth) {
+        const area = valueAreaFromProfile(state.depth.profile ?? [], 70);
+        drawValueArea(env, area.poc, area.vah, area.val);
       }
     }
 

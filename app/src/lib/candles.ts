@@ -27,6 +27,7 @@ export function toHeikinAshi(rows: Candle[]): Candle[] {
       high: Math.max(row.high, open, close),
       low: Math.min(row.low, open, close),
       close,
+      volume: row.volume,
     });
     prevOpen = open;
     prevClose = close;

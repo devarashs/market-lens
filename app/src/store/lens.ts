@@ -35,6 +35,17 @@ export interface LayerFlags {
   liqs: boolean;
   liqmap: boolean;
   positioning: boolean;
+  // Liquidation Hunter set (ported from the Pine indicator).
+  stopClusters: boolean;
+  sweeps: boolean;
+  absorption: boolean;
+  exhaustion: boolean;
+  squeeze: boolean;
+  priceExtreme: boolean;
+  roundNumbers: boolean;
+  volumeNodes: boolean;
+  liqGrid: boolean;
+  poc: boolean;
   heat: boolean;
   profile: boolean;
   walls: boolean;
@@ -87,6 +98,7 @@ interface LensState {
   setActiveVenues(venues: string[] | null): void;
   setBinMult(symbol: Symbol, mult: number): void;
   setLayer(layer: keyof LayerFlags, on: boolean): void;
+  setLayers(next: Partial<LayerFlags>): void;
   setMaVisible(id: string, on: boolean): void;
   setBeepEnabled(on: boolean): void;
   setPositioningMetric(metric: string): void;
@@ -127,6 +139,11 @@ const DEFAULT_LAYERS: LayerFlags = {
   heat: true, profile: true, walls: true, trades: true, depth: true,
   candles: true, cvd: true, vwap: true, levels: true,
   liqs: true, liqmap: true, positioning: true,
+  // The Hunter layers start OFF: they are a dense set, and turning all of
+  // them on at once is how the original ends up unreadable.
+  stopClusters: false, sweeps: false, absorption: false, exhaustion: false,
+  squeeze: false, priceExtreme: false, roundNumbers: false,
+  volumeNodes: false, liqGrid: false, poc: false,
 };
 
 function loadPrefs(): Partial<StoredPrefs> {
@@ -320,6 +337,10 @@ export const useLensStore = create<LensState>()(
     },
     setLayer(layer, on) {
       set({ layers: { ...get().layers, [layer]: on } });
+      savePrefs(get());
+    },
+    setLayers(next) {
+      set({ layers: { ...get().layers, ...next } });
       savePrefs(get());
     },
     setMaVisible(id, on) {

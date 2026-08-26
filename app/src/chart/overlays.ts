@@ -10,6 +10,7 @@
 import { COLORS, TF_SECONDS, type Timeframe } from "../lib/config";
 import { formatUsd } from "../lib/format";
 import type { DepthMessage, HeatCol, LiqBand, LiqEvent, Trade } from "../lib/types";
+import type { StopCluster, Sweep } from "../lib/qlh";
 
 export interface DrawEnv {
   under: CanvasRenderingContext2D;
@@ -258,4 +259,188 @@ export function drawBubbles(
       env.over.fillText("$" + formatUsd(mark.usd), mark.x + length + 4, mark.y + 3);
     }
   });
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Liquidation Hunter layers (ported from the Pine indicator)
+   ═══════════════════════════════════════════════════════════════════ */
+
+/** Estimated stop pockets: a band from the swing point out to one ATR
+    buffer beyond it, drawn from where the swing formed to the right edge.
+    Claims layer, so it paints under the candles. */
+export function drawStopClusters(env: DrawEnv, clusters: StopCluster[],
+                                 times: number[]): void {
+  for (const cluster of clusters) {
+    const top = env.priceToY(cluster.top);
+    const bottom = env.priceToY(cluster.bottom);
+    if (top === null || bottom === null) continue;
+    const startTime = times[cluster.fromIndex];
+    const x1 = startTime !== undefined ? env.timeToX(startTime) : null;
+    const left = x1 ?? 0;
+    const rgb = cluster.kind === "high" ? COLORS.askRgb : COLORS.bidRgb;
+    env.under.fillStyle = `rgba(${rgb},0.10)`;
+    env.under.fillRect(left, Math.min(top, bottom), env.width - left,
+                       Math.max(1, Math.abs(bottom - top)));
+    env.under.strokeStyle = `rgba(${rgb},0.35)`;
+    env.under.lineWidth = 1;
+    env.under.strokeRect(left, Math.min(top, bottom), env.width - left,
+                         Math.max(1, Math.abs(bottom - top)));
+  }
+}
+
+/** Sweep markers: a triangle where a stop run was pierced and rejected. */
+export function drawSweeps(env: DrawEnv, marks: Sweep[]): void {
+  env.over.font = "10px sans-serif";
+  for (const mark of marks) {
+    const x = env.timeToX(mark.time);
+    const y = env.priceToY(mark.price);
+    if (x === null || y === null) continue;
+    const rgb = mark.kind === "bull" ? COLORS.bidRgb : COLORS.askRgb;
+    const direction = mark.kind === "bull" ? 1 : -1;
+    env.over.fillStyle = `rgba(${rgb},0.95)`;
+    env.over.beginPath();
+    env.over.moveTo(x, y - direction * 3);
+    env.over.lineTo(x - 5, y - direction * 11);
+    env.over.lineTo(x + 5, y - direction * 11);
+    env.over.closePath();
+    env.over.fill();
+  }
+}
+
+/** Small diamonds/crosses for the point events. */
+export function drawEventMarks(
+  env: DrawEnv, marks: { time: number; price: number; kind: "bull" | "bear" }[],
+  shape: "diamond" | "cross", rgbOverride?: string,
+): void {
+  for (const mark of marks) {
+    const x = env.timeToX(mark.time);
+    const y = env.priceToY(mark.price);
+    if (x === null || y === null) continue;
+    const rgb = rgbOverride ?? (mark.kind === "bull" ? COLORS.bidRgb : COLORS.askRgb);
+    const offset = mark.kind === "bull" ? 9 : -9;
+    env.over.strokeStyle = `rgba(${rgb},0.95)`;
+    env.over.fillStyle = `rgba(${rgb},0.85)`;
+    env.over.lineWidth = 1.5;
+    env.over.beginPath();
+    if (shape === "diamond") {
+      env.over.moveTo(x, y + offset - 4);
+      env.over.lineTo(x + 4, y + offset);
+      env.over.lineTo(x, y + offset + 4);
+      env.over.lineTo(x - 4, y + offset);
+      env.over.closePath();
+      env.over.fill();
+    } else {
+      env.over.moveTo(x - 4, y + offset - 4);
+      env.over.lineTo(x + 4, y + offset + 4);
+      env.over.moveTo(x + 4, y + offset - 4);
+      env.over.lineTo(x - 4, y + offset + 4);
+      env.over.stroke();
+    }
+  }
+}
+
+/** Dotted horizontal lines at the round numbers around price. */
+export function drawRoundLevels(env: DrawEnv, levels: number[]): void {
+  env.under.strokeStyle = "rgba(140,140,170,0.35)";
+  env.under.lineWidth = 1;
+  env.under.setLineDash([2, 4]);
+  for (const level of levels) {
+    const y = env.priceToY(level);
+    if (y === null || y < 0 || y > env.height) continue;
+    env.under.beginPath();
+    env.under.moveTo(0, y);
+    env.under.lineTo(env.width, y);
+    env.under.stroke();
+  }
+  env.under.setLineDash([]);
+}
+
+/** Dashed lines at the heaviest-traded price levels. */
+export function drawVolumeNodes(env: DrawEnv, levels: number[]): void {
+  env.under.lineWidth = 1;
+  env.under.setLineDash([6, 4]);
+  levels.forEach((level, index) => {
+    const y = env.priceToY(level);
+    if (y === null || y < 0 || y > env.height) return;
+    env.under.strokeStyle = `rgba(255,160,50,${index === 0 ? 0.55 : 0.32})`;
+    env.under.beginPath();
+    env.under.moveTo(0, y);
+    env.under.lineTo(env.width, y);
+    env.under.stroke();
+  });
+  env.under.setLineDash([]);
+}
+
+/** The Pine liquidation grid: leverage tiers projected off an anchor.
+    Kept visually distinct from the measured liq map, because it is a
+    different claim — this one assumes every position opened at the
+    anchor. */
+export function drawLiqGrid(env: DrawEnv, anchor: number,
+                            tiers: readonly number[]): void {
+  const anchorY = env.priceToY(anchor);
+  if (anchorY !== null) {
+    env.under.strokeStyle = "rgba(130,140,170,0.45)";
+    env.under.setLineDash([4, 4]);
+    env.under.beginPath();
+    env.under.moveTo(0, anchorY);
+    env.under.lineTo(env.width, anchorY);
+    env.under.stroke();
+    env.under.setLineDash([]);
+  }
+  for (const leverage of tiers) {
+    for (const price of [anchor * (1 - 1 / leverage), anchor * (1 + 1 / leverage)]) {
+      const y = env.priceToY(price);
+      if (y === null || y < 0 || y > env.height) continue;
+      const strong = leverage >= 50;
+      env.under.strokeStyle = strong
+        ? "rgba(255,80,80,0.40)" : "rgba(160,100,255,0.38)";
+      env.under.lineWidth = 1;
+      env.under.beginPath();
+      env.under.moveTo(0, y);
+      env.under.lineTo(env.width, y);
+      env.under.stroke();
+      env.over.font = "9px sans-serif";
+      env.over.fillStyle = strong
+        ? "rgba(255,110,110,0.85)" : "rgba(175,125,255,0.8)";
+      env.over.fillText(`${leverage}x`, 4, y - 3);
+    }
+  }
+}
+
+/** POC and value-area edges, from our own executed-volume profile. */
+export function drawValueArea(env: DrawEnv, poc: number | null,
+                              vah: number | null, val: number | null): void {
+  const band = [vah, val].map((price) => price === null ? null : env.priceToY(price));
+  if (band[0] !== null && band[1] !== null) {
+    env.under.fillStyle = "rgba(100,180,255,0.06)";
+    env.under.fillRect(0, Math.min(band[0], band[1]), env.width,
+                       Math.abs(band[1] - band[0]));
+    env.under.strokeStyle = "rgba(100,180,255,0.45)";
+    env.under.setLineDash([5, 4]);
+    for (const y of band as number[]) {
+      env.under.beginPath();
+      env.under.moveTo(0, y);
+      env.under.lineTo(env.width, y);
+      env.under.stroke();
+    }
+    env.under.setLineDash([]);
+  }
+  if (poc === null) return;
+  const y = env.priceToY(poc);
+  if (y === null || y < 0 || y > env.height) return;
+  env.under.strokeStyle = "rgba(255,215,0,0.75)";
+  env.under.lineWidth = 2;
+  env.under.beginPath();
+  env.under.moveTo(0, y);
+  env.under.lineTo(env.width, y);
+  env.under.stroke();
+  env.over.font = "10px sans-serif";
+  env.over.fillStyle = "rgba(255,215,0,0.95)";
+  env.over.fillText("POC", 4, y - 4);
+}
+
+/** Full-height tint for a regime that is true right now. */
+export function drawRegimeTint(env: DrawEnv, rgba: string): void {
+  env.under.fillStyle = rgba;
+  env.under.fillRect(0, 0, env.width, env.height);
 }

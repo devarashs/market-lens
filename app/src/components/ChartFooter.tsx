@@ -1,16 +1,9 @@
 import { exportChartPng } from "../chart/chartExport";
-import { MA_DEFS, POSITIONING_LABELS } from "../lib/config";
+import { LAYER_DEFS, MA_DEFS, POSITIONING_LABELS } from "../lib/config";
+import { FilterMenu, type FilterOption } from "./FilterMenu";
 import { availableMetrics, pickPositioningMetric } from "../lib/positioning";
 import { formatUsd } from "../lib/format";
-import { useLensStore, type LayerFlags } from "../store/lens";
-
-const LAYER_TOGGLES: [keyof LayerFlags, string][] = [
-  ["candles", "candles"], ["trades", "trades"], ["walls", "order lines"],
-  ["heat", "heatmap"], ["profile", "profile"], ["depth", "depth"],
-  ["liqs", "liqs"], ["liqmap", "liq map"],
-  ["cvd", "CVD"], ["vwap", "VWAP"], ["levels", "day levels"],
-  ["positioning", "net L/S"],
-];
+import { useLensStore } from "../store/lens";
 
 /** Which positioning series the chart draws. Only rendered when the
     symbol has more than one — most do not, and the equity perps have
@@ -111,10 +104,18 @@ function LiqGauge() {
   );
 }
 
-function VenueToggles() {
-  const venues = useLensStore((s) => s.depth?.venues) ?? [];
+/** Markets: which venues feed the aggregate, searchable. */
+function VenueMenu() {
+  const venues = useLensStore((s) => s.depth?.venues) ?? EMPTY_VENUES;
   const activeVenues = useLensStore((s) => s.activeVenues);
   const setActiveVenues = useLensStore((s) => s.setActiveVenues);
+  const selected = new Set(activeVenues ?? venues);
+
+  const options: FilterOption[] = venues.map((venue) => ({
+    key: venue,
+    label: venue,
+    group: venue.endsWith("-fut") || venue === "hyperliquid" ? "Perps" : "Spot",
+  }));
 
   function toggle(venue: string, on: boolean) {
     const current = activeVenues ?? venues;
@@ -123,26 +124,59 @@ function VenueToggles() {
   }
 
   return (
-    <span id="venue-toggles">
-      {venues.map((venue) => (
-        <label key={venue} className="muted toggle">
-          <input
-            type="checkbox"
-            checked={activeVenues === null || activeVenues.includes(venue)}
-            onChange={(event) => toggle(venue, event.target.checked)}
-          />{" "}{venue}
-        </label>
-      ))}
-    </span>
+    <FilterMenu
+      title="Markets" options={options} selected={selected} onToggle={toggle}
+      onSetAll={(on) => setActiveVenues(on ? null : [])}
+    />
   );
 }
 
-export function ChartFooter() {
+/** Chart layers, grouped and searchable — twenty-two of them now. */
+function LayerMenu() {
   const layers = useLensStore((s) => s.layers);
-  const maVisible = useLensStore((s) => s.maVisible);
-  const beepEnabled = useLensStore((s) => s.beepEnabled);
   const setLayer = useLensStore((s) => s.setLayer);
+  const setLayers = useLensStore((s) => s.setLayers);
+  const flags = layers as unknown as Record<string, boolean>;
+  const selected = new Set(
+    LAYER_DEFS.filter((def) => flags[def.key]).map((def) => def.key));
+  return (
+    <FilterMenu
+      title="Layers"
+      options={LAYER_DEFS.map((def) => ({ ...def }))}
+      selected={selected}
+      onToggle={(key, on) => setLayer(key as keyof typeof layers, on)}
+      onSetAll={(on) => setLayers(Object.fromEntries(
+        LAYER_DEFS.map((def) => [def.key, on])) as Partial<typeof layers>)}
+    />
+  );
+}
+
+/** Moving averages: SMA and EMA in one searchable list. */
+function MaMenu() {
+  const maVisible = useLensStore((s) => s.maVisible);
   const setMaVisible = useLensStore((s) => s.setMaVisible);
+  const selected = new Set(MA_DEFS.filter((def) => maVisible[def.id])
+    .map((def) => def.id));
+  const options: FilterOption[] = MA_DEFS.map((def) => ({
+    key: def.id,
+    label: def.label,
+    color: def.color,
+    group: def.kind === "sma" ? "Simple" : "Exponential",
+    hint: `${def.length} bars`,
+  }));
+  return (
+    <FilterMenu
+      title="MAs" options={options} selected={selected}
+      onToggle={(key, on) => setMaVisible(key, on)}
+      onSetAll={(on) => MA_DEFS.forEach((def) => setMaVisible(def.id, on))}
+    />
+  );
+}
+
+const EMPTY_VENUES: string[] = [];
+
+export function ChartFooter() {
+  const beepEnabled = useLensStore((s) => s.beepEnabled);
   const setBeepEnabled = useLensStore((s) => s.setBeepEnabled);
 
   return (
@@ -151,7 +185,6 @@ export function ChartFooter() {
         <Gauges />
         <LiqGauge />
         <PositioningPicker />
-        <VenueToggles />
         <label className="muted toggle">
           <input
             type="checkbox"
@@ -162,31 +195,10 @@ export function ChartFooter() {
         <button className="mini-btn" title="Save chart as PNG" onClick={exportChartPng}>
           PNG
         </button>
-      </div>
-      <div className="footer-row">
-        <span className="muted row-label">layers</span>
-        {LAYER_TOGGLES.map(([layer, label]) => (
-          <label key={layer} className="muted toggle">
-            <input
-              type="checkbox"
-              checked={layers[layer]}
-              onChange={(event) => setLayer(layer, event.target.checked)}
-            />{" "}{label}
-          </label>
-        ))}
-        <span className="muted row-label">MA</span>
-        <span id="ma-toggles">
-          {MA_DEFS.map((def) => (
-            <label key={def.id} className="muted toggle">
-              <input
-                type="checkbox"
-                checked={maVisible[def.id]}
-                onChange={(event) => setMaVisible(def.id, event.target.checked)}
-              />
-              <span className="swatch" style={{ background: def.color }} />
-              {def.label}
-            </label>
-          ))}
+        <span className="footer-menus">
+          <LayerMenu />
+          <VenueMenu />
+          <MaMenu />
         </span>
       </div>
     </div>
