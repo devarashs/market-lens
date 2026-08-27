@@ -28,6 +28,150 @@ claims for the same reason.</p>
 <p>Not financial advice; a visualization and measurement instrument.</p>`,
   },
   {
+    id: "reading-mechanics",
+    title: "Reading the book & tape: mechanics",
+    body: `
+<p>Every panel here is one of two things, and confusing them is the most
+common way to misread a market.</p>
+<p><b>The book is intent.</b> Resting limit orders cost nothing to place
+and nothing to cancel. A $9M bid wall is a <i>claim</i> that someone will
+buy there, and claims are withdrawn constantly &mdash; often faster than
+you can react to them.</p>
+<p><b>The tape is commitment.</b> An executed print cannot be un-executed.
+Money changed hands at that price, in that size, at that moment.</p>
+<h4>Maker, taker, and what "side" means</h4>
+<p>Every trade has exactly two participants: a <b>maker</b> whose limit
+order was resting, and a <b>taker</b> who crossed the spread to hit it. The
+side shown on every tape row is <b>the taker's side</b> &mdash; the
+aggressor. A "buy" print means someone lifted an offer; a "sell" print
+means someone hit a bid.</p>
+<p>This matters because of a trap that catches almost everyone:
+<b>there is no such thing as more buyers than sellers.</b> Every coin
+bought was sold by someone. Volume is always matched. What is <i>not</i>
+matched is <b>urgency</b> &mdash; and that asymmetry is the only thing the
+tape actually measures. CVD is cumulative taker-buy notional minus
+taker-sell notional: it tracks who was impatient, not who was numerous.</p>
+<h4>Reading the ladder</h4>
+<p>Each row is <b>total resting size in that price bin</b>, in dollars, not
+a single order. The cumulative column is the running total walking away
+from mid, and the bar behind each row scales to that cumulative share
+&mdash; so the bar answers "how much must be eaten to get price here",
+which is the question that matters for execution.</p>
+<p>Set grouping (<b>grp</b>) to match what you are looking for: the finest
+rung shows queue texture and iceberg refills, the coarsest shows where the
+shelves are. Grouping is derived from price, so the rungs are round numbers
+scaled to each symbol.</p>`,
+  },
+  {
+    id: "reading-composite",
+    title: "The aggregated book is a composite",
+    body: `
+<p>The ladder sums <b>nine venues, spot and perpetual futures together</b>.
+That is deliberate &mdash; it shows total liquidity at a price &mdash; but
+it means the top of the aggregated book <b>is not a tradeable book</b>, and
+reading it as one will mislead you.</p>
+<p>A real reading taken 2026-08-27, BTC:</p>
+<pre>kraken       80,333.4 / 80,333.5     spot
+coinbase     80,328.8 / 80,328.8     spot
+okx          80,319.5 / 80,319.6     spot
+binance      80,309.9 / 80,310.0     spot
+hyperliquid  80,302.0 / 80,303.0     perp
+binance-fut  80,274.4 / 80,274.5     perp
+okx-fut      80,271.4 / 80,271.5     perp
+bybit-fut    80,271.2 / 80,271.3     perp</pre>
+<p>Every individual venue is tight &mdash; spreads of $0 to $1 &mdash; and
+<b>not one of them is crossed</b>. But Kraken's <i>bid</i> at 80,333 sits
+$59 above Binance-fut's <i>ask</i> at 80,274, so the aggregate crosses by
+about 7&nbsp;basis points.</p>
+<p>That gap is not an error and not free money: it is the <b>basis</b>, the
+standing price difference between spot and perpetual futures. Perps were
+trading ~0.07% below spot in this sample. Crossing it means two different
+instruments, two fee schedules, funding, and inventory in two places.</p>
+<p><b>Consequences for reading:</b></p>
+<ul>
+<li>The spread shown between the ladder's two halves is a
+<b>cross-venue artifact</b>, not a spread. When it reads negative, you are
+looking at the basis. For a real spread, use the per-venue best bid/ask in
+the walls hover, or filter Markets down to one venue.</li>
+<li>Near the touch the two sides <b>overlap</b>: bid bins and ask bins can
+occupy the same prices. Away from the touch this disappears and the ladder
+reads normally.</li>
+<li>Filter to a single venue whenever you care about executable price. Keep
+all nine when you care about where size sits.</li>
+</ul>
+<h4>Walls are not actors</h4>
+<p>Venue attribution exists for exactly this reason. A wall reading $9.2M
+at 80,240 broke down as okx-fut 26%, binance-fut 22%, bybit-fut 18%,
+binance 11%, kraken 8%, coinbase 6%, okx 5%, bybit 4% &mdash; <b>eight
+venues, none dominant</b>. That is not one whale defending a level; it is
+ordinary market-making summed across books that happen to align. A wall
+that is 90% one venue is a genuinely different object. Hover before
+concluding anyone is "defending" anything.</p>`,
+  },
+  {
+    id: "reading-limits",
+    title: "What tape reading does and does not tell you",
+    body: `
+<p>This section exists because the honest answer differs sharply from what
+most tape-reading material claims, and this tool has the receipts.</p>
+<h4>What the numbers actually support</h4>
+<p>A 43-second BTC sample, 2026-08-27: 364 prints, $15.3M traded, net taker
+buying of <b>+$4.5M</b> (+29% net aggression) &mdash; and price moved
+<b>+0.041%</b>, about $33, inside a range it had already covered. Roughly
+$136,000 of net taker buying per $1 of price movement.</p>
+<p>Read that carefully, because it is the whole lesson: <b>a large flow
+imbalance is normal and mostly gets absorbed.</b> Someone was on the other
+side of all $4.5M, passively, without needing to move. Flow imbalance is
+not a directional signal by itself; it measures how much pressure the
+resting book is currently able to eat.</p>
+<p>Also from that sample: prints of $100k or more were <b>8% of prints but
+39% of notional</b>. Size is concentrated. Watching every print is not the
+job; watching the tail is.</p>
+<h4>What failed when we tested it</h4>
+<p>The classic patterns were backtested with frozen rules and random-entry
+controls (see the research docs). They did not survive:</p>
+<ul>
+<li><b>Stop sweeps</b> &mdash; negative at every horizon, and at a 10-day
+hold trailed random entry by <b>5.9 percentage points</b>. The inverse
+would have made money.</li>
+<li><b>Absorption, exhaustion, squeeze release</b> &mdash; 1 of 16
+signal-and-hold combinations beat random entry out of sample, fewer than
+chance alone would be expected to produce.</li>
+<li>The same rule set failed again independently on <b>21 equity
+tickers</b>, a different asset class in a different decade.</li>
+</ul>
+<p>So: reading the tape tells you <b>what is happening now</b>. Treating it
+as a forecast is the leap every indicator invites and almost none earn.</p>
+<h4>What it is genuinely good for</h4>
+<ul>
+<li><b>Execution.</b> Cumulative depth tells you what your own order will
+cost to fill and where it will slip to. The least glamorous use, and by far
+the best evidenced.</li>
+<li><b>Liquidity risk.</b> A book that has thinned means the same order
+moves price much further. Thin books are when gaps happen.</li>
+<li><b>Context for a move.</b> Did price rise on real traded volume, or
+drift on nothing? The tape answers that; the candle does not.</li>
+<li><b>Dislocations.</b> Basis between spot and perps, one venue leading
+the others, funding paying for a crowded side.</li>
+<li><b>Forced flow.</b> Liquidations are non-discretionary &mdash; someone
+is being sold out regardless of what they think. That is a different kind
+of information from a discretionary print.</li>
+</ul>
+<h4>Drills</h4>
+<ol>
+<li>Pick one symbol. Set grp to the finest rung and watch the touch for
+five minutes without forming an opinion. Notice how often large levels
+appear and vanish without ever trading.</li>
+<li>Turn the tape sound on and look away from the screen. Learn the flow by
+ear &mdash; pitch is size, timbre is side.</li>
+<li>Find a moment where CVD rises while price does not. Then look at the
+book: something is absorbing. Note what happens next, and keep score
+honestly over twenty occurrences before believing anything.</li>
+<li>Filter Markets to one venue, then back to all nine, and watch the
+spread readout change. That difference is the composite effect above.</li>
+</ol>`,
+  },
+  {
     id: "getting-started",
     title: "Getting started",
     body: `
