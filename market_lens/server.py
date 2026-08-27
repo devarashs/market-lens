@@ -65,6 +65,9 @@ from market_lens.positioning import (
     parse_binance_ratio,
     parse_bitfinex_sizes,
 )
+from market_lens.stablecoins import (
+    LLAMA_CHART_URL, parse_supply_series, summarise as summarise_stables,
+)
 from market_lens.store import LensStore
 from market_lens.symbolinfo import COINGECKO_IDS, build as build_symbol_info
 from market_lens.venues import (
@@ -735,6 +738,38 @@ async def trade_broadcast_loop() -> None:
                     await ws.send_str(message)
 
 
+STABLECOIN_POLL_SECONDS = 3600
+# Latest summary, served to clients and refreshed hourly (the source is a
+# daily series, so anything faster is wasted).
+STABLECOINS: dict = {"available": False}
+
+
+async def stablecoin_poll() -> None:
+    """Total stablecoin supply — the market's dry powder.
+
+    Shown as a measurement on probation, not a signal: the arena's test
+    (docs/research/stablecoin-flow.md) found a faint 7-day tilt that
+    survived its controls and nothing at any other horizon.
+    """
+    await asyncio.sleep(25)
+    global STABLECOINS
+    async with ClientSession() as session:
+        while True:
+            try:
+                async with session.get(LLAMA_CHART_URL, timeout=45) as response:
+                    rows = await response.json()
+                series = parse_supply_series(rows)
+                if series:
+                    STABLECOINS = summarise_stables(series)
+            except Exception as error:  # noqa: BLE001 — reference data is best-effort
+                print(f"stablecoins: {error.__class__.__name__}: {error}", flush=True)
+            await asyncio.sleep(STABLECOIN_POLL_SECONDS)
+
+
+async def stablecoins_handler(_: web.Request) -> web.Response:
+    return web.json_response(STABLECOINS)
+
+
 async def flow_archive_loop() -> None:
     """Persist each completed minute of executed flow, per symbol."""
     while True:
@@ -1189,6 +1224,7 @@ def build_app() -> web.Application:
     app.router.add_get("/ws", ws_handler)
     app.router.add_get("/klines", klines_handler)
     app.router.add_get("/symbol-info", symbol_info_handler)
+    app.router.add_get("/stablecoins", stablecoins_handler)
     assets_dir = WEB_DIR / "assets"
     if assets_dir.exists():  # absent until the first `npm run build`
         app.router.add_static("/assets/", assets_dir)
@@ -1288,7 +1324,7 @@ async def main_async() -> None:
                  binance_depth_poll(), binance_futures_depth_poll(), metrics_poll(),
                  liquidation_estimator_poll(),
                  flow_archive_loop(), retention_loop(), backfill_cvd(),
-                 trade_broadcast_loop(), coingecko_poll(),
+                 trade_broadcast_loop(), coingecko_poll(), stablecoin_poll(),
                  positioning_poll(),
                  heat_ring_loop(), broadcast_depth_loop()):
         asyncio.create_task(task)

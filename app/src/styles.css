@@ -380,3 +380,6 @@ body { margin: 0; background: var(--bg); color: var(--text);
 .filter-row input { accent-color: var(--accent); }
 .filter-label { color: var(--text); }
 .filter-hint { font-size: 10px; margin-left: auto; text-align: right; }
+
+/* Market-wide stablecoin readout: pushed to the end of the metrics strip. */
+.metrics .stables { margin-left: auto; }

@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { formatUsd } from "../lib/format";
 import { useLensStore } from "../store/lens";
+import { Stablecoins } from "./Stablecoins";
 
 /** Funding / OI strip. A 30s ticker re-renders it so the funding
     countdown moves even when no fresh metrics arrive. */
@@ -45,6 +46,9 @@ export function MetricsBar() {
       {parts.length
         ? parts.map((part, i) => <span key={i}>{i > 0 && " · "}{part}</span>)
         : <span className="muted">loading metrics…</span>}
+      {/* Market-wide, not per-symbol: it sits at the end so the symbol's
+          own numbers stay first. */}
+      <Stablecoins />
     </div>
   );
 }
