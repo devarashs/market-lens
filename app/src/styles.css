@@ -566,6 +566,78 @@ body { margin: 0; background: var(--bg); color: var(--text);
 }
 .tf-grid button:disabled { opacity: 0.35; cursor: not-allowed; }
 
+
+/* ====================================================== control polish
+   Everything interactive shared three gaps: state changed instantly (no
+   transition, which reads as abrupt rather than fast), keyboard focus was
+   invisible on most controls, and several had no hover feedback at all —
+   the timeframe pills among them.
+
+   Deliberately inside the existing token system rather than a restyle:
+   same palette, same radii, same borders. What changes is that the
+   controls acknowledge you. Motion is 120ms and only ever colour or a
+   sub-pixel transform, so nothing here can cost a frame.
+
+   Placed after the component rules it touches so it wins on order rather
+   than on inflated specificity — no !important, no id-selector arms race. */
+
+:where(button, select, a, input, .mini-btn, .symbol-current, .filter-row) {
+  transition: background-color 120ms ease-out, border-color 120ms ease-out,
+              color 120ms ease-out, opacity 120ms ease-out;
+}
+
+/* One focus ring for the whole app. :focus-visible so a mouse click never
+   leaves a ring behind, but every keyboard path shows one — the rule the
+   old styles broke by having no visible focus state to begin with. */
+:where(button, select, a, input, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Press feedback. A sub-pixel drop is enough to feel mechanical, and
+   transform composites so it cannot cause layout. */
+button:not(:disabled):active,
+.mini-btn:not(:disabled):active,
+#symbols a:active {
+  transform: translateY(0.5px);
+}
+
+#timeframes button:not(:disabled):hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+#timeframes button.active:hover { background: var(--surface); }
+
+#symbols a:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+.mini-btn:not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+.mini-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Selects had the browser's default focus behaviour and no hover at all. */
+select:not(:disabled):hover { border-color: var(--accent); }
+
+/* Text inputs: the accent border on focus was only wired on two of them. */
+input[type="text"]:focus, input[type="number"]:focus, input[type="search"]:focus {
+  border-color: var(--accent);
+}
+
+/* Range inputs picked up the browser default, which is the one blue thing
+   in an otherwise warm palette. */
+input[type="range"] { accent-color: var(--accent); }
+
+@media (prefers-reduced-motion: reduce) {
+  :where(button, select, a, input, .mini-btn, .symbol-current, .filter-row) {
+    transition: none;
+  }
+  button:active, .mini-btn:active, #symbols a:active { transform: none; }
+}
+
 .muted { color: var(--muted); }
 .attribution {
   padding: 6px 18px; border-top: 1px solid var(--border); font-size: 11px;
