@@ -849,6 +849,82 @@ async def deribit_adapter(on_book, on_trade) -> None:
             await asyncio.sleep(RECONNECT_SECONDS)
 
 
+GATEIO_WS = "wss://api.gateio.ws/ws/v4/"
+GATEIO_BOOK_DEPTH = "100"
+
+
+async def gateio_adapter(on_book, on_trade) -> None:
+    """Gate.io spot: `spot.order_book` snapshots + `spot.trades`.
+
+    $493M/24h on BTC, the third-largest venue we were missing.
+
+    Uses the periodic FULL-snapshot book channel rather than
+    `spot.order_book_update`, which is an incremental feed needing a REST
+    snapshot and a U/u sequence reconciliation. The snapshot channel caps
+    at 100 levels per side, and that is the right trade here: the deep tail
+    of the aggregate comes from Coinbase's full book anyway, so the extra
+    machinery would buy depth we already have and add a resync path that
+    can silently drift.
+
+    Sizes are plain base units and prices plain quote — no contract
+    multiplier, unlike OKX swaps or Deribit's inverse perps. `side` is the
+    taker side, so it is already the aggressor.
+    """
+    pair_to_key = {spec.gateio: spec.key
+                   for spec in SYMBOLS.values() if spec.gateio}
+    if not pair_to_key:
+        return
+    books: dict[str, DeltaBook] = {p: DeltaBook() for p in pair_to_key}
+
+    while True:
+        try:
+            async with websockets.connect(GATEIO_WS, ping_interval=20,
+                                          max_size=2**22) as ws:
+                for pair in pair_to_key:
+                    await ws.send(fastjson.dumps_str({
+                        "time": 0, "channel": "spot.order_book",
+                        "event": "subscribe",
+                        "payload": [pair, GATEIO_BOOK_DEPTH, "100ms"]}))
+                    await ws.send(fastjson.dumps_str({
+                        "time": 0, "channel": "spot.trades",
+                        "event": "subscribe", "payload": [pair]}))
+                _log("gateio: connected + subscribed")
+                async for raw in ws:
+                    message = fastjson.loads(raw)
+                    if message.get("event") != "update":
+                        continue          # subscribe acks
+                    result = message.get("result")
+                    if not result:
+                        continue
+                    channel = message.get("channel")
+                    if channel == "spot.order_book":
+                        key = pair_to_key.get(result.get("s"))
+                        if key is None:
+                            continue
+                        book = books[result["s"]]
+                        # Whole book every message: snapshot, never delta.
+                        book.snapshot(result.get("bids", []), result.get("asks", []))
+                        payload = book.maybe_emit()
+                        if payload is not None:
+                            on_book("gateio", key, payload)
+                    elif channel == "spot.trades":
+                        key = pair_to_key.get(result.get("currency_pair"))
+                        if key is None:
+                            continue
+                        price = float(result["price"])
+                        size = float(result["amount"])
+                        on_trade("gateio", key, {
+                            "price": price, "size": size,
+                            "side": "buy" if result.get("side") == "buy" else "sell",
+                            "notional": price * size,
+                            "ts": int(float(result.get("create_time_ms")
+                                            or time.time() * 1000)),
+                        })
+        except Exception as error:  # noqa: BLE001 — isolation contract
+            _log(f"gateio: {error.__class__.__name__}: {error} — reconnecting in {RECONNECT_SECONDS}s")
+            await asyncio.sleep(RECONNECT_SECONDS)
+
+
 async def kraken_adapter(on_book, on_trade) -> None:
     """Kraken WS v2: book (500 levels, snapshot+update) + trade. USD-quoted."""
     symbol_to_key = {spec.kraken: spec.key

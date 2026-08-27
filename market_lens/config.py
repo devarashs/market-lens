@@ -38,6 +38,7 @@ class SymbolSpec:
     bybit: str | None = None     # Bybit spot symbol
     okx: str | None = None       # OKX spot instId
     bitget: str | None = None    # Bitget spot instId
+    gateio: str | None = None    # Gate.io spot currency_pair
     # Deribit INVERSE perp only (USD-quoted). Its USDC linear perps
     # report size in base units instead, so they are not interchangeable.
     deribit: str | None = None   # e.g. BTC-PERPETUAL
@@ -69,19 +70,19 @@ SYMBOLS: dict[str, SymbolSpec] = {
     spec.key: spec
     for spec in (
         SymbolSpec("BTC", "btcusdt", "BTC", price_bin=10.0, big_trade_usd=100_000,
-                   bybit="BTCUSDT", okx="BTC-USDT", bitget="BTCUSDT", deribit="BTC-PERPETUAL",
+                   bybit="BTCUSDT", okx="BTC-USDT", bitget="BTCUSDT", gateio="BTC_USDT", deribit="BTC-PERPETUAL",
                    coinbase="BTC-USD", kraken="BTC/USD", core=True),
         SymbolSpec("ETH", "ethusdt", "ETH", price_bin=1.0, big_trade_usd=50_000,
-                   bybit="ETHUSDT", okx="ETH-USDT", bitget="ETHUSDT", deribit="ETH-PERPETUAL",
+                   bybit="ETHUSDT", okx="ETH-USDT", bitget="ETHUSDT", gateio="ETH_USDT", deribit="ETH-PERPETUAL",
                    coinbase="ETH-USD", kraken="ETH/USD", core=True),
         SymbolSpec("SOL", "solusdt", "SOL", price_bin=0.05, big_trade_usd=25_000,
-                   bybit="SOLUSDT", okx="SOL-USDT", bitget="SOLUSDT",
+                   bybit="SOLUSDT", okx="SOL-USDT", bitget="SOLUSDT", gateio="SOL_USDT",
                    coinbase="SOL-USD", kraken="SOL/USD", core=True),
         # BNB trades on neither Coinbase nor Kraken (Binance's own token).
         SymbolSpec("BNB", "bnbusdt", "BNB", price_bin=0.2, big_trade_usd=25_000,
-                   bybit="BNBUSDT", okx="BNB-USDT", bitget="BNBUSDT", core=True),
+                   bybit="BNBUSDT", okx="BNB-USDT", bitget="BNBUSDT", gateio="BNB_USDT", core=True),
         SymbolSpec("DOGE", "dogeusdt", "DOGE", price_bin=0.0005, big_trade_usd=25_000,
-                   bybit="DOGEUSDT", okx="DOGE-USDT", bitget="DOGEUSDT",
+                   bybit="DOGEUSDT", okx="DOGE-USDT", bitget="DOGEUSDT", gateio="DOGE_USDT",
                    coinbase="DOGE-USD", kraken="DOGE/USD", core=True),
         SymbolSpec("HYPE", None, "HYPE", price_bin=0.01, big_trade_usd=10_000, core=True),
 
