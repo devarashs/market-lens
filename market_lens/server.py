@@ -941,6 +941,113 @@ async def heat_ring_loop() -> None:
                     await ws.send_str(message)
 
 
+def build_depth_frame(symbol: str, venues: list[str] | None,
+                      requested_bin: float | None) -> str | None:
+    """One serialised depth frame, or None when no venue has a book yet.
+
+    Extracted from the broadcast loop on 2026-08-28 so a subscribe can send
+    depth IMMEDIATELY. It could not before: the seed sent six frames of
+    history and no book, leaving the order book — the smallest frame at
+    11KB and the one actually being looked at — to wait for the next
+    broadcast tick. Measured at 1102ms on BTC, and within 25ms of that on
+    ETH, SOL and MON. That was the whole felt sluggishness of switching
+    symbols.
+
+    Costs one aggregation per call, which is why the seed sends this
+    before the heavy history rather than in addition to a tick.
+    """
+    venue_books = STATE.venue_books_for(symbol, venues)
+    if not venue_books:
+        return None
+    spec = SYMBOLS[symbol]
+    reference_price = (STATE.accumulators[symbol].last_price
+                       or (STATE.metrics.get(symbol) or {}).get("last") or 0.0)
+    books = [book for _, book in venue_books]
+    # The ladder is capped by how far this book actually reaches,
+    # so its coarsest rung always renders a usable number of rows.
+    # It therefore reflects the client's venue filter too.
+    span = book_span(books, reference_price)
+    bin_ladder = grouping_ladder(reference_price, spec.price_bin, span)
+    effective_bin = resolve_bin(reference_price, spec.price_bin,
+                                requested_bin, span)
+    profile = aggregate_books(books, effective_bin, DEPTH_BINS_PER_SIDE)
+    accumulator = STATE.accumulators[symbol]
+
+    # Per-venue attribution for the wall rows ("who is quoting
+    # it"). Only the 4+4 wall bins matter, so each venue book gets
+    # ONE binning pass into those bins — replacing nine full
+    # aggregate_books calls per tick, which py-spy showed as the
+    # residual load on the 1-vCPU VPS (2026-08-26).
+    #
+    # Bounded to WALL_SCAN_LEVELS per side since books went deep
+    # (2026-08-28): this loop is O(venues x levels) per broadcast,
+    # so scanning all 10,000 would have multiplied it 25-fold to
+    # attribute walls that, as the docs note, cluster near the
+    # touch anyway. The bound is the old emit depth, so wall
+    # attribution behaves exactly as it did before.
+    walls = top_walls(profile)
+    wall_bin_sets = {side: {price for price, _ in walls[side]}
+                     for side in ("bids", "asks")}
+    venue_wall_usd: dict[str, dict[str, dict[float, float]]] = {
+        side: {} for side in ("bids", "asks")}
+    for venue, book in venue_books:
+        for side in ("bids", "asks"):
+            targets = wall_bin_sets[side]
+            if not targets:
+                continue
+            sums = venue_wall_usd[side].setdefault(venue, {})
+            for level_price, size in book[side][:WALL_SCAN_LEVELS]:
+                level_bin = bin_price(level_price, effective_bin)
+                if level_bin in targets:
+                    sums[level_bin] = sums.get(level_bin, 0.0)                                 + level_price * size
+    attributed_walls = {
+        side: [
+            [price, usd, {
+                venue: round(sums[price], 2)
+                for venue, sums in venue_wall_usd[side].items()
+                if price in sums
+            }]
+            for price, usd in walls[side]
+        ]
+        for side in ("bids", "asks")
+    }
+    best = {
+        venue: {
+            "bid": book["bids"][0][0] if book["bids"] else None,
+            "ask": book["asks"][0][0] if book["asks"] else None,
+        }
+        for venue, book in venue_books
+    }
+    imbalance = book_imbalance(profile)
+    # The signals read the same filtered view the panels show, so a
+    # venue filter changes the verdict rather than only the picture.
+    filtered_pressure = [(ts, side, notional)
+                         for ts, venue, side, notional in accumulator.pressure
+                         if venues is None or venue in venues]
+    tape = tape_signal(filtered_pressure, spec.big_trade_usd,
+                       accumulator.cvd_minutes)
+    book = book_signal(imbalance, attributed_walls, profile["mid"],
+                       list(accumulator.heat), effective_bin)
+    message = fastjson.dumps_str({
+        "type": "depth", "symbol": symbol,
+        "venues": STATE.venues_for(symbol),
+        "activeVenues": venues or STATE.venues_for(symbol),
+        "bin": effective_bin,
+        "binLadder": bin_ladder,
+        **profile,
+        "imbalance": imbalance,
+        "walls": attributed_walls,
+        "best": best,
+        "vwap": accumulator.vwap(venues),
+        "pressure": accumulator.pressure_totals(venues),
+        "profile": accumulator.profile_rows(venues=venues),
+        "signals": {"tape": tape, "book": book,
+                    "combined": combined_signal(tape, book)},
+    })
+
+    return message
+
+
 async def broadcast_depth_loop() -> None:
     last_recorded: dict[str, float] = {}
     while True:
@@ -968,95 +1075,10 @@ async def broadcast_depth_loop() -> None:
                 last_recorded[symbol] = time.time()
 
         for (symbol, venue_key, requested_bin), sockets in wanted.items():
-            venues = list(venue_key) if venue_key else None
-            venue_books = STATE.venue_books_for(symbol, venues)
-            if not venue_books:
+            message = build_depth_frame(
+                symbol, list(venue_key) if venue_key else None, requested_bin)
+            if message is None:
                 continue
-            spec = SYMBOLS[symbol]
-            reference_price = (STATE.accumulators[symbol].last_price
-                               or (STATE.metrics.get(symbol) or {}).get("last") or 0.0)
-            books = [book for _, book in venue_books]
-            # The ladder is capped by how far this book actually reaches,
-            # so its coarsest rung always renders a usable number of rows.
-            # It therefore reflects the client's venue filter too.
-            span = book_span(books, reference_price)
-            bin_ladder = grouping_ladder(reference_price, spec.price_bin, span)
-            effective_bin = resolve_bin(reference_price, spec.price_bin,
-                                        requested_bin, span)
-            profile = aggregate_books(books, effective_bin, DEPTH_BINS_PER_SIDE)
-            accumulator = STATE.accumulators[symbol]
-
-            # Per-venue attribution for the wall rows ("who is quoting
-            # it"). Only the 4+4 wall bins matter, so each venue book gets
-            # ONE binning pass into those bins — replacing nine full
-            # aggregate_books calls per tick, which py-spy showed as the
-            # residual load on the 1-vCPU VPS (2026-08-26).
-            #
-            # Bounded to WALL_SCAN_LEVELS per side since books went deep
-            # (2026-08-28): this loop is O(venues x levels) per broadcast,
-            # so scanning all 10,000 would have multiplied it 25-fold to
-            # attribute walls that, as the docs note, cluster near the
-            # touch anyway. The bound is the old emit depth, so wall
-            # attribution behaves exactly as it did before.
-            walls = top_walls(profile)
-            wall_bin_sets = {side: {price for price, _ in walls[side]}
-                             for side in ("bids", "asks")}
-            venue_wall_usd: dict[str, dict[str, dict[float, float]]] = {
-                side: {} for side in ("bids", "asks")}
-            for venue, book in venue_books:
-                for side in ("bids", "asks"):
-                    targets = wall_bin_sets[side]
-                    if not targets:
-                        continue
-                    sums = venue_wall_usd[side].setdefault(venue, {})
-                    for level_price, size in book[side][:WALL_SCAN_LEVELS]:
-                        level_bin = bin_price(level_price, effective_bin)
-                        if level_bin in targets:
-                            sums[level_bin] = sums.get(level_bin, 0.0)                                 + level_price * size
-            attributed_walls = {
-                side: [
-                    [price, usd, {
-                        venue: round(sums[price], 2)
-                        for venue, sums in venue_wall_usd[side].items()
-                        if price in sums
-                    }]
-                    for price, usd in walls[side]
-                ]
-                for side in ("bids", "asks")
-            }
-            best = {
-                venue: {
-                    "bid": book["bids"][0][0] if book["bids"] else None,
-                    "ask": book["asks"][0][0] if book["asks"] else None,
-                }
-                for venue, book in venue_books
-            }
-            imbalance = book_imbalance(profile)
-            # The signals read the same filtered view the panels show, so a
-            # venue filter changes the verdict rather than only the picture.
-            filtered_pressure = [(ts, side, notional)
-                                 for ts, venue, side, notional in accumulator.pressure
-                                 if venues is None or venue in venues]
-            tape = tape_signal(filtered_pressure, spec.big_trade_usd,
-                               accumulator.cvd_minutes)
-            book = book_signal(imbalance, attributed_walls, profile["mid"],
-                               list(accumulator.heat), effective_bin)
-            message = fastjson.dumps_str({
-                "type": "depth", "symbol": symbol,
-                "venues": STATE.venues_for(symbol),
-                "activeVenues": venues or STATE.venues_for(symbol),
-                "bin": effective_bin,
-                "binLadder": bin_ladder,
-                **profile,
-                "imbalance": imbalance,
-                "walls": attributed_walls,
-                "best": best,
-                "vwap": accumulator.vwap(venues),
-                "pressure": accumulator.pressure_totals(venues),
-                "profile": accumulator.profile_rows(venues=venues),
-                "signals": {"tape": tape, "book": book,
-                            "combined": combined_signal(tape, book)},
-            })
             for ws in sockets:
                 if not ws.closed:
                     await ws.send_str(message)
@@ -1264,7 +1286,22 @@ def filtered_cvd_points(symbol: str, venues: list[str] | None) -> list[list]:
 
 
 async def send_symbol_seed(ws: web.WebSocketResponse, symbol: str) -> None:
-    """On (re)subscribe: recorded trades + heat ring + CVD + latest metrics."""
+    """On (re)subscribe: the book FIRST, then recorded trades + heat ring +
+    CVD + latest metrics.
+
+    Order is the point. This used to send six frames of history and no
+    book at all, leaving depth to arrive on the next broadcast tick —
+    measured at 1102ms on BTC and within 25ms of that on ETH, SOL and MON.
+    So a symbol switch flooded ~580KB of history in under 400ms while the
+    order book, the smallest frame and the one being looked at, showed up
+    a second later. That was the whole felt sluggishness of switching, and
+    it was never a payload problem: parsing the entire seed costs 1.7ms.
+    """
+    subscription = STATE.clients.get(ws) or {}
+    depth = build_depth_frame(symbol, subscription.get("venues"),
+                              subscription.get("bin"))
+    if depth is not None:
+        await ws.send_str(depth)
     accumulator = STATE.accumulators[symbol]
     # Seed = permanent whale archive + the in-memory recent-flow ring,
     # deduped (a whale exists in both) and capped, oldest first.
