@@ -1,11 +1,10 @@
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 
-import {
-  CHART_STYLES, NO_SECONDS, TIMEFRAMES, type ChartStyle, type Symbol,
-} from "../lib/config";
+import { CHART_STYLES, type ChartStyle, type Symbol } from "../lib/config";
 import { useLensStore } from "../store/lens";
 import { SymbolInfoButton } from "./SymbolInfo";
 import { SymbolPicker } from "./SymbolPicker";
+import { TimeframePicker } from "./TimeframePicker";
 
 /** Kept as pills beside the picker — the everyday watchlist. */
 const QUICK_SYMBOLS: readonly Symbol[] = ["BTC", "ETH", "SOL", "HYPE", "NVDA", "GOLD"];
@@ -20,7 +19,6 @@ const STATUS_LABELS = {
 } as const;
 
 export function Header() {
-  const navigate = useNavigate();
   const symbol = useLensStore((s) => s.symbol);
   const timeframe = useLensStore((s) => s.timeframe);
   const chartStyle = useLensStore((s) => s.chartStyle);
@@ -56,18 +54,7 @@ export function Header() {
           );
         })}
       </nav>
-      <nav id="timeframes" aria-label="Timeframes">
-        {TIMEFRAMES.map((tf) => (
-          <button
-            key={tf}
-            className={tf === timeframe ? "active" : ""}
-            disabled={tf === "1s" && NO_SECONDS.includes(symbol)}
-            onClick={() => navigate(`/${symbol}/${tf}`)}
-          >
-            {tf}
-          </button>
-        ))}
-      </nav>
+      <TimeframePicker symbol={symbol} timeframe={timeframe} />
       <select
         className="mini-btn"
         aria-label="Chart style"

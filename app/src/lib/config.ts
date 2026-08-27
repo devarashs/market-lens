@@ -94,15 +94,45 @@ export const SYMBOL_NAMES: Partial<Record<Symbol, string>> = {
   CL: "WTI Crude Oil", BRENTOIL: "Brent Crude Oil",
 };
 
-export const TIMEFRAMES = ["1s", "1m", "5m", "15m", "1h", "4h", "1d"] as const;
+/** Every interval /klines serves, coarsest-last. Probed against both
+    upstreams 2026-08-27; mirrors INTERVAL_SECONDS in market_lens/server.py
+    and is covered by tests/test_timeframe_sync.py. */
+export const TIMEFRAMES = [
+  "1s", "1m", "3m", "5m", "15m", "30m",
+  "1h", "2h", "4h", "6h", "8h", "12h",
+  "1d", "3d", "1w", "1M",
+] as const;
 export type Timeframe = (typeof TIMEFRAMES)[number];
+
+/** Shown as pills; the rest live in the dropdown beside them. Chosen as
+    the frames a chart actually gets left on, not a sample of the scale. */
+export const QUICK_TIMEFRAMES: readonly Timeframe[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
+
+/** Dropdown grouping — a flat list of sixteen reads as a wall. */
+export const TIMEFRAME_GROUPS: readonly { label: string; frames: readonly Timeframe[] }[] = [
+  { label: "seconds", frames: ["1s"] },
+  { label: "minutes", frames: ["1m", "3m", "5m", "15m", "30m"] },
+  { label: "hours", frames: ["1h", "2h", "4h", "6h", "8h", "12h"] },
+  { label: "days and up", frames: ["1d", "3d", "1w", "1M"] },
+];
 
 /** Hyperliquid's finest candle is 1m — HL-only symbols cannot show seconds. */
 export const NO_SECONDS: readonly Symbol[] =
   SYMBOL_META.filter((meta) => !meta.seconds).map((meta) => meta.key);
 
+/** Intervals Hyperliquid does not serve, so HL-only symbols cannot show
+    them. Mirrors HL_UNSUPPORTED in market_lens/server.py. */
+export const HL_UNSUPPORTED: readonly Timeframe[] = ["1s", "6h"];
+
+/** Can this symbol show this interval? HL-only symbols lose 1s and 6h. */
+export function timeframeAvailable(symbol: Symbol, timeframe: Timeframe): boolean {
+  return !(HL_UNSUPPORTED.includes(timeframe) && NO_SECONDS.includes(symbol));
+}
+
 export const TF_SECONDS: Record<Timeframe, number> = {
-  "1s": 1, "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400,
+  "1s": 1, "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1_800,
+  "1h": 3_600, "2h": 7_200, "4h": 14_400, "6h": 21_600, "8h": 28_800,
+  "12h": 43_200, "1d": 86_400, "3d": 259_200, "1w": 604_800, "1M": 2_592_000,
 };
 
 /** Per-symbol "big trade" notional floor (USD); the slider multiplies it. */

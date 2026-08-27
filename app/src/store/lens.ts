@@ -13,7 +13,7 @@ import {
   BASE_THRESHOLDS,
   MA_DEFS,
   MAX_TRADES,
-  NO_SECONDS,
+  timeframeAvailable,
   type ChartStyle,
   type Symbol,
   type Timeframe,
@@ -120,9 +120,11 @@ export function currentThreshold(state: Pick<LensState, "symbol" | "thresholdMul
   return BASE_THRESHOLDS[state.symbol] * state.thresholdMult;
 }
 
-/** Coerce an unknown timeframe for a symbol: HL-only symbols have no 1s. */
+/** Coerce a timeframe the symbol cannot serve. Hyperliquid publishes
+    neither 1s nor 6h, so an HL-only symbol reached while sitting on either
+    falls back to 1m rather than requesting a 400. */
 export function legalTimeframe(symbol: Symbol, timeframe: Timeframe): Timeframe {
-  return timeframe === "1s" && NO_SECONDS.includes(symbol) ? "1m" : timeframe;
+  return timeframeAvailable(symbol, timeframe) ? timeframe : "1m";
 }
 
 // ---------------------------------------------------------------- prefs

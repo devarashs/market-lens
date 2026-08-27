@@ -104,6 +104,19 @@ CVD_MAX_MINUTES = 14 * 24 * 60
 # minute, so thinning changes the resolution of the line, never its level.
 CVD_MAX_POINTS = 2000
 
+# Candle intervals offered by /klines. Probed against both upstreams on
+# 2026-08-27 rather than copied from their docs: Binance serves all of
+# these, Hyperliquid serves all but the two in HL_UNSUPPORTED.
+INTERVAL_SECONDS: dict[str, int] = {
+    "1s": 1, "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1_800,
+    "1h": 3_600, "2h": 7_200, "4h": 14_400, "6h": 21_600, "8h": 28_800,
+    "12h": 43_200, "1d": 86_400, "3d": 259_200, "1w": 604_800,
+    "1M": 2_592_000,
+}
+KLINE_INTERVALS = tuple(INTERVAL_SECONDS)
+# 1s: Hyperliquid's finest candle is 1m. 6h: not offered at all.
+HL_UNSUPPORTED = frozenset({"1s", "6h"})
+
 
 class SymbolAccumulators:
     """Everything derived from the full trade stream, per symbol."""
@@ -1123,15 +1136,17 @@ async def klines_handler(request: web.Request) -> web.Response:
     """Normalized candles: [{time, open, high, low, close}], any interval."""
     symbol = request.query.get("symbol", "BTC")
     interval = request.query.get("interval", "1m")
-    if interval not in ("1s", "1m", "5m", "15m", "1h", "4h", "1d"):
+    if interval not in KLINE_INTERVALS:
         return web.json_response({"error": "bad interval"}, status=400)
     spec = SYMBOLS.get(symbol)
     if spec is None:
         return web.json_response({"error": "unknown symbol"}, status=400)
-    if interval == "1s" and spec.binance is None:
-        # Hyperliquid's finest candle is 1m — seconds exist only via Binance.
-        return web.json_response({"error": "1s unavailable for this symbol"},
-                                 status=400)
+    if interval in HL_UNSUPPORTED and spec.binance is None:
+        # Probed against both APIs 2026-08-27: Binance serves all sixteen
+        # intervals; Hyperliquid serves every one except 1s (its finest
+        # candle is 1m) and 6h (simply not offered).
+        return web.json_response(
+            {"error": f"{interval} unavailable for this symbol"}, status=400)
     limit = min(int(request.query.get("limit", "500")), 1000)
     # History pagination: candles strictly before endTime (epoch ms) —
     # the client's pan-left backfill.
@@ -1164,8 +1179,7 @@ async def klines_handler(request: web.Request) -> web.Response:
                     continue
             return web.json_response({"error": "kline fetch failed"}, status=502)
 
-        interval_ms = {"1m": 60, "5m": 300, "15m": 900,
-                       "1h": 3600, "4h": 14400, "1d": 86400}[interval] * 1000
+        interval_ms = INTERVAL_SECONDS[interval] * 1000
         anchor = int(end_time) if end_time is not None else int(time.time() * 1000)
         request_body = {"coin": spec.hyperliquid, "interval": interval,
                         "startTime": anchor - limit * interval_ms}

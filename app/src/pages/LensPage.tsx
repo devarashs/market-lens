@@ -16,7 +16,7 @@ import { BookPanel } from "../components/BookPanel";
 import { TapePanel } from "../components/TapePanel";
 import { LensChart } from "../chart/LensChart";
 import {
-  SYMBOLS, TIMEFRAMES, type Symbol, type Timeframe,
+  SYMBOLS, TIMEFRAMES, timeframeAvailable, type Symbol, type Timeframe,
 } from "../lib/config";
 import { formatPrice } from "../lib/format";
 import { useCandlePolling } from "../lib/useCandlePolling";
@@ -85,12 +85,15 @@ export function LensPage() {
         navigate(`/${SYMBOLS[digit - 1]}/${state.timeframe}`);
         return;
       }
-      const tfIndex = TIMEFRAMES.indexOf(state.timeframe);
+      // Step only through frames this symbol can actually show, so the
+      // bracket keys never land on a disabled interval (HL has no 1s/6h).
+      const usable = TIMEFRAMES.filter((tf) => timeframeAvailable(state.symbol, tf));
+      const tfIndex = usable.indexOf(state.timeframe);
       if (event.key === "[" && tfIndex > 0) {
-        navigate(`/${state.symbol}/${TIMEFRAMES[tfIndex - 1]}`);
+        navigate(`/${state.symbol}/${usable[tfIndex - 1]}`);
       }
-      if (event.key === "]" && tfIndex < TIMEFRAMES.length - 1) {
-        navigate(`/${state.symbol}/${TIMEFRAMES[tfIndex + 1]}`);
+      if (event.key === "]" && tfIndex >= 0 && tfIndex < usable.length - 1) {
+        navigate(`/${state.symbol}/${usable[tfIndex + 1]}`);
       }
       if (event.key === "h") state.setLayer("heat", !state.layers.heat);
       if (event.key === "p") state.setLayer("profile", !state.layers.profile);
