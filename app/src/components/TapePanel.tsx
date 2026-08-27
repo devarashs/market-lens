@@ -64,7 +64,7 @@ export function TapePanel() {
   const totals = useMemo(() => liqTotals(forced), [forced]);
 
   return (
-    <aside className="tape" aria-label="Trade flow panel">
+    <aside className="tape tape-flow" aria-label="Trade flow panel">
       <h2>Big trades <span className="muted">≥ ${formatUsd(threshold)}</span></h2>
       <input
         type="range"

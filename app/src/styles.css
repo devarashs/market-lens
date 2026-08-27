@@ -254,10 +254,18 @@ body { margin: 0; background: var(--bg); color: var(--text);
   display: inline-block; width: 8px; height: 8px; border-radius: 2px;
   vertical-align: -1px; margin-right: 3px;
 }
+/* Shared by BOTH side panels — the book column and the trade column — so
+   it keeps its own scrolling. The column layout below is scoped to the
+   trade panel only; putting it here clipped the book panel's Top Walls
+   list with no way to scroll to it. */
 .tape {
-  border-left: 1px solid var(--border); padding: 12px 14px;
+  border-left: 1px solid var(--border); overflow-y: auto; padding: 12px 14px;
   background: var(--surface);
-  display: flex; flex-direction: column; min-height: 0;
+}
+/* Trade panel only: the list scrolls, the liquidation strip stays pinned
+   beneath it rather than scrolling away with the prints. */
+.tape.tape-flow {
+  display: flex; flex-direction: column; min-height: 0; overflow: hidden;
 }
 .tape h2 { font-size: 13px; margin: 0 0 10px; }
 /* ------------------------------------------------------- orderbook ladder */
