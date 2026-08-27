@@ -103,15 +103,22 @@ SYMBOLS: dict[str, SymbolSpec] = {
         SymbolSpec("NEAR", None, "NEAR", price_bin=0.0005, big_trade_usd=10_000),
         SymbolSpec("XPL", None, "XPL", price_bin=0.00005, big_trade_usd=10_000),
         # Monad, added 2026-08-27. price_bin is HL's own tick (measured
-        # 1e-6 off the live book, not assumed). The threshold looks tiny
-        # next to its peers because HL's MON flow genuinely is: a 40s
-        # sample gave a median print of $136 and a max of $478, so the
-        # usual $10K would leave the tape permanently empty. $500 puts
-        # ~10 prints/min on it at the default 0.5x slider. MON also
-        # trades on Binance perp, Bybit, OKX, Coinbase and Kraken with
-        # far larger clips — see the extended-symbol note above for why
-        # this stays Hyperliquid-only.
-        SymbolSpec("MON", None, "MON", price_bin=0.000001, big_trade_usd=500),
+        # 1e-6 off the live book, not assumed).
+        #
+        # The threshold looks tiny next to its peers because HL's MON flow
+        # genuinely is: measured on the deployed collector, 70s of
+        # forwarded prints had a median of $119 and a max of $357. The
+        # usual $10K would leave the tape permanently empty. $500 was the
+        # first guess and still showed only 1.7 prints/min at the default
+        # 0.5x slider — sized against a raw venue sample that included the
+        # sub-$50 prints the server never forwards. $200 puts the default
+        # at $100, roughly 5 prints/min, with the slider spanning
+        # $20 to $800 around it.
+        #
+        # MON also trades on Binance perp, Bybit, OKX, Coinbase and Kraken
+        # with far larger clips — see the extended-symbol note above for
+        # why this stays Hyperliquid-only.
+        SymbolSpec("MON", None, "MON", price_bin=0.000001, big_trade_usd=200),
 
         # ------------------------------- extended: equities, indices, commodities
         # Hyperliquid builder dexes (HIP-3) list perps on real-world assets,

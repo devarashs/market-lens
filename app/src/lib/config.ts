@@ -39,7 +39,7 @@ export const SYMBOL_META = [
   { key: "TRUMP", cls: "crypto", seconds: false, threshold: 10000 },
   { key: "NEAR", cls: "crypto", seconds: false, threshold: 10000 },
   { key: "XPL", cls: "crypto", seconds: false, threshold: 10000 },
-  { key: "MON", cls: "crypto", seconds: false, threshold: 500 },
+  { key: "MON", cls: "crypto", seconds: false, threshold: 200 },
   { key: "NVDA", cls: "stock", seconds: false, threshold: 25000 },
   { key: "TSLA", cls: "stock", seconds: false, threshold: 10000 },
   { key: "AAPL", cls: "stock", seconds: false, threshold: 10000 },
