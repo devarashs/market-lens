@@ -34,7 +34,21 @@ from market_lens.config import (
 )
 
 RECONNECT_SECONDS = 5
-BOOK_EMIT_LEVELS = 400  # top-N per side handed to the aggregator
+# Top-N per side handed to the aggregator. Raised 400 -> 10000 on
+# 2026-08-28: at 400 the aggregate book reached only +/-$863 on BTC, which
+# is 1.1% of price, so the grouping ladder could never offer a rung coarser
+# than $200 and the shelves traders actually watch were off the end of the
+# data. Measured against Coinbase's full book (22,912 levels):
+#
+#   levels    emit    span      payload   coarsest grouping
+#      400    1.3ms   +/-$863      2.9KB    $200
+#    10000    4.7ms   +/-$28,122   6.0KB    $10,000
+#
+# The payload does not grow because aggregate_books caps at 150 bins per
+# side, so depth is nearly free on the wire; the cost is CPU in the sort.
+# Venues whose own book is shallower than this are unaffected — only
+# Coinbase and Kraken publish books deep enough for the cap to bind.
+BOOK_EMIT_LEVELS = 10_000
 # Emitting costs a partial sort of the book; consumers read at the 0.4s
 # broadcast cadence, so per-delta emits were pure waste — and on the
 # 1-vCPU VPS, Coinbase's full-book feed (10k+ levels, many deltas/sec)

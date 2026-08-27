@@ -91,6 +91,10 @@ from market_lens.venues import (
 HEAT_INTERVAL_SECONDS = 10
 HEAT_RING_LENGTH = 360          # ≈ 1 hour of columns
 HEAT_BINS_PER_SIDE = 40
+# How far into each venue book the wall-attribution pass reads. Walls sit
+# near the touch, so this costs nothing in accuracy and keeps a per-tick
+# O(venues x levels) loop off the deep tail of the book.
+WALL_SCAN_LEVELS = 400
 PRESSURE_WINDOW_SECONDS = 300
 METRICS_POLL_SECONDS = 30
 # 1000 levels at a 5s cadence stays well inside Binance's request-weight
@@ -987,6 +991,13 @@ async def broadcast_depth_loop() -> None:
             # ONE binning pass into those bins — replacing nine full
             # aggregate_books calls per tick, which py-spy showed as the
             # residual load on the 1-vCPU VPS (2026-08-26).
+            #
+            # Bounded to WALL_SCAN_LEVELS per side since books went deep
+            # (2026-08-28): this loop is O(venues x levels) per broadcast,
+            # so scanning all 10,000 would have multiplied it 25-fold to
+            # attribute walls that, as the docs note, cluster near the
+            # touch anyway. The bound is the old emit depth, so wall
+            # attribution behaves exactly as it did before.
             walls = top_walls(profile)
             wall_bin_sets = {side: {price for price, _ in walls[side]}
                              for side in ("bids", "asks")}
@@ -998,7 +1009,7 @@ async def broadcast_depth_loop() -> None:
                     if not targets:
                         continue
                     sums = venue_wall_usd[side].setdefault(venue, {})
-                    for level_price, size in book[side]:
+                    for level_price, size in book[side][:WALL_SCAN_LEVELS]:
                         level_bin = bin_price(level_price, effective_bin)
                         if level_bin in targets:
                             sums[level_bin] = sums.get(level_bin, 0.0)                                 + level_price * size
