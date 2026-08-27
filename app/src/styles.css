@@ -37,6 +37,19 @@
 }
 
 * { box-sizing: border-box; }
+
+/* No painted scrollbars anywhere (Arash, 2026-08-27: "remove the scroll
+   indicator ... and just if user scrolls it works"). Eight containers
+   scroll — both side panels, the tape list, the docs page and its nav,
+   the symbol picker, the filter menus and the info modal — and a grey
+   rail beside each one is noise in a dense layout.
+
+   SCROLLING ITSELF IS UNTOUCHED. This hides the indicator only: wheel,
+   trackpad, touch, keyboard (arrows/PgUp/PgDn/Home/End on a focused
+   container) and programmatic scrollTop all behave exactly as before.
+   Hiding the rail also reclaims its gutter, so rows get its width back. */
+* { scrollbar-width: none; }              /* Firefox */
+*::-webkit-scrollbar { width: 0; height: 0; }   /* Chromium, WebKit */
 body { margin: 0; background: var(--bg); color: var(--text);
   font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; }
 #root { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
