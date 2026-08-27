@@ -198,16 +198,29 @@ function extremeLevel(
 
 /**
  * The price band where the aggregated ladder's two sides overlap, or null
- * when they do not meet at all.
+ * when the book is not crossed. Inclusive at both ends.
  *
- * Inclusive at both ends, and a locked aggregate (highest bid exactly
- * equal to lowest ask) counts: the ladder does print that price on both
- * sides, which is the thing worth marking.
+ * Requires the highest bid to be STRICTLY above the lowest ask. Equality
+ * means both sides landed in one bin, which is ordinary price grouping and
+ * not a cross: at grp 10 a venue quoting 79,914.4 / 79,914.5 puts its own
+ * bid and ask in the same $10 bin. Observed live 2026-08-27 with Markets
+ * filtered to kraken alone — two rows marked, with a tooltip blaming a
+ * spot/perp basis for something binning had caused. That condition is
+ * ubiquitous at coarse grouping, so marking it would be permanent
+ * decoration rather than a signal.
  *
- * Rows inside this band are not wrong and are never removed — showing
- * where size rests across all nine venues is the entire point of the
- * aggregate. They only need marking, because a bid printed above an ask
- * reads as a bug to anyone who has not been told why it is not one.
+ * This answers a narrower question than crossVenueBasis, and the two can
+ * legitimately disagree. crossVenueBasis reads raw per-venue quotes and
+ * asks "is the book crossed"; this reads the BINNED ladder and asks "does
+ * the ladder visually print a bid above an ask". Coarse grouping collapses
+ * a real crossing inside a single bin — at grp 500 a $50 basis does — and
+ * then the basis line is shown with nothing marked, correctly: there is no
+ * visual anomaly on screen to explain. Marking follows what is drawn.
+ *
+ * Rows inside the band are not wrong and are never removed — showing where
+ * size rests across all nine venues is the entire point of the aggregate.
+ * They only need marking, because a bid printed above an ask reads as a
+ * bug to anyone who has not been told why it is not one.
  */
 export function overlapBand(
   bids: readonly DepthLevel[] | null | undefined,
@@ -216,7 +229,7 @@ export function overlapBand(
   const highestBid = extremeLevel(bids, "max");
   const lowestAsk = extremeLevel(asks, "min");
   if (highestBid === null || lowestAsk === null) return null;
-  if (highestBid < lowestAsk) return null;
+  if (highestBid <= lowestAsk) return null;
   return { low: lowestAsk, high: highestBid };
 }
 

@@ -295,8 +295,42 @@ describe("overlapBand", () => {
     expect(overlapBand([[99, 1], [98, 1]], [[101, 1], [102, 1]])).toBeNull();
   });
 
-  it("counts a locked aggregate, where both sides print the same price", () => {
-    expect(overlapBand([[100, 1]], [[100, 1]])).toEqual({ low: 100, high: 100 });
+  it("does not mark one shared bin, which is grouping and not a cross", () => {
+    // Seen live with Markets filtered to kraken at grp 10: a $0.10 spread
+    // puts that venue's own bid and ask in the same $10 bin. Ubiquitous at
+    // coarse grouping, so marking it would be decoration, not a signal.
+    expect(overlapBand([[100, 1]], [[100, 1]])).toBeNull();
+  });
+
+  it("marks as soon as the bid bin is strictly above the ask bin", () => {
+    expect(overlapBand([[110, 1]], [[100, 1]])).toEqual({ low: 100, high: 110 });
+  });
+
+  it("never marks a row the ladder has not actually drawn crossed", () => {
+    // The marking explains a visual anomaly, so it must follow what is on
+    // screen. Wherever the drawn ladder is not crossed there is nothing to
+    // explain, whatever the underlying quotes are doing.
+    const uncrossed: Array<[DepthLevel[], DepthLevel[]]> = [
+      [[[99, 1]], [[101, 1]]], // ordinary
+      [[[100, 1]], [[100, 1]]], // both sides in one bin
+      [[[99, 1], [98, 1]], [[100, 1], [101, 1]]], // touching bins
+    ];
+    for (const [bids, asks] of uncrossed) {
+      expect(overlapBand(bids, asks)).toBeNull();
+    }
+  });
+
+  it("stays silent when coarse grouping hides a real basis inside one bin", () => {
+    // overlapBand reads the BINNED ladder; crossVenueBasis reads raw
+    // quotes. At grp 500 a $50 basis lands inside a single bin: the basis
+    // is still reported, and correctly nothing is marked, because the
+    // drawn ladder shows no bid above an ask.
+    const best: VenueBest = {
+      spot: { bid: 80_030, ask: 80_031 },
+      perp: { bid: 79_979, ask: 79_980 },
+    };
+    expect(crossVenueBasis(best)).not.toBeNull();
+    expect(overlapBand([[80_000, 1]], [[80_000, 1]])).toBeNull();
   });
 
   it("does not depend on the server's level ordering", () => {
