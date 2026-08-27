@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "dev:vps": "vite --mode vps"
   },
   "dependencies": {
     "lightweight-charts": "^4.2.0",

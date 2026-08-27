@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  appendCapped, asLiqItem, asTradeItem, tintPercent, visibleRows,
+  appendCapped, asLiqItem, asTradeItem, liqRows, liqTotals, sizeLevel,
+  tradeRows,
 } from "./tape";
 import type { LiqEvent, Trade } from "./types";
 
@@ -67,55 +68,93 @@ describe("appendCapped", () => {
   });
 });
 
-describe("visibleRows", () => {
-  const trades = [
-    asTradeItem(trade({ ts: 10, notional: 10_000 })),
-    asTradeItem(trade({ ts: 30, notional: 200_000, venue: "okx" })),
-    asTradeItem(trade({ ts: 50, notional: 90_000 })),
-  ];
-  const liqs = [
-    asLiqItem(liq({ ts: 20, notional: 150_000 })),
-    asLiqItem(liq({ ts: 40, notional: 5_000 })),
-  ];
-
-  it("interleaves both kinds newest first", () => {
-    const rows = visibleRows(trades, liqs, 0, null, "BTC", 10);
-    expect(rows.map((r) => r.item.ts)).toEqual([50, 40, 30, 20, 10]);
-    expect(rows.map((r) => r.kind))
-      .toEqual(["trade", "liq", "trade", "liq", "trade"]);
+describe("tradeRows", () => {
+  it("returns trades newest first", () => {
+    const trades = [1, 2, 3].map((ts) => asTradeItem(trade({ ts })));
+    expect(tradeRows(trades, 0, null, "BTC", 10).map((r) => r.ts)).toEqual([3, 2, 1]);
   });
 
-  it("applies the threshold to both kinds", () => {
-    const rows = visibleRows(trades, liqs, 100_000, null, "BTC", 10);
-    expect(rows.map((r) => r.item.ts)).toEqual([30, 20]);
+  it("never returns liquidations — they have their own strip now", () => {
+    const trades = [asTradeItem(trade())];
+    const rows = tradeRows(trades, 0, null, "BTC", 10);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].side).toBe("buy");
   });
 
-  it("applies the venue filter", () => {
-    const rows = visibleRows(trades, liqs, 0, ["okx"], "BTC", 10);
-    expect(rows.map((r) => r.item.ts)).toEqual([30]);
+  it("gates on threshold, venue and symbol", () => {
+    const trades = [
+      asTradeItem(trade({ ts: 1, notional: 10 })),
+      asTradeItem(trade({ ts: 2, notional: 200_000, venue: "okx" })),
+      asTradeItem(trade({ ts: 3, notional: 200_000, symbol: "ETH" })),
+    ];
+    const rows = tradeRows(trades, 100_000, ["okx"], "BTC", 10);
+    expect(rows.map((r) => r.ts)).toEqual([2]);
   });
 
-  it("drops rows belonging to another symbol", () => {
-    const stale = [asTradeItem(trade({ ts: 60, symbol: "ETH" }))];
-    expect(visibleRows(stale, [], 0, null, "BTC", 10)).toEqual([]);
+  it("stops at the limit", () => {
+    const trades = Array.from({ length: 50 }, (_, i) => asTradeItem(trade({ ts: i })));
+    expect(tradeRows(trades, 0, null, "BTC", 5)).toHaveLength(5);
   });
 
-  it("stops at the limit, newest kept", () => {
-    const rows = visibleRows(trades, liqs, 0, null, "BTC", 2);
-    expect(rows.map((r) => r.item.ts)).toEqual([50, 40]);
-  });
-
-  it("handles either list being empty", () => {
-    expect(visibleRows([], liqs, 0, null, "BTC", 10)).toHaveLength(2);
-    expect(visibleRows(trades, [], 0, null, "BTC", 10)).toHaveLength(3);
-    expect(visibleRows([], [], 0, null, "BTC", 10)).toEqual([]);
+  it("handles an empty tape", () => {
+    expect(tradeRows([], 0, null, "BTC", 10)).toEqual([]);
   });
 });
 
-describe("tintPercent", () => {
-  it("floors at the threshold and saturates for monsters", () => {
-    expect(tintPercent(1)).toBe(21);
-    expect(tintPercent(0)).toBe(12);
-    expect(tintPercent(1000)).toBe(50);
+describe("liqRows", () => {
+  it("returns liquidations newest first", () => {
+    const liqs = [1, 2, 3].map((ts) => asLiqItem(liq({ ts })));
+    expect(liqRows(liqs, null, "BTC", 10).map((r) => r.ts)).toEqual([3, 2, 1]);
+  });
+
+  it("ignores the big-trade threshold — a forced exit counts at any size", () => {
+    const liqs = [asLiqItem(liq({ notional: 5 }))];
+    expect(liqRows(liqs, null, "BTC", 10)).toHaveLength(1);
+  });
+
+  it("still respects the venue filter and symbol", () => {
+    const liqs = [
+      asLiqItem(liq({ ts: 1, venue: "okx-fut" })),
+      asLiqItem(liq({ ts: 2, venue: "binance-fut" })),
+      asLiqItem(liq({ ts: 3, venue: "okx-fut", symbol: "ETH" })),
+    ];
+    expect(liqRows(liqs, ["okx-fut"], "BTC", 10).map((r) => r.ts)).toEqual([1]);
+  });
+
+  it("stops at the limit", () => {
+    const liqs = Array.from({ length: 30 }, (_, i) => asLiqItem(liq({ ts: i })));
+    expect(liqRows(liqs, null, "BTC", 7)).toHaveLength(7);
+  });
+});
+
+describe("liqTotals", () => {
+  it("splits notional by the side that was forced out", () => {
+    const rows = [
+      asLiqItem(liq({ side: "long", notional: 100 })),
+      asLiqItem(liq({ side: "long", notional: 50 })),
+      asLiqItem(liq({ side: "short", notional: 25 })),
+    ];
+    expect(liqTotals(rows)).toEqual({ long: 150, short: 25 });
+  });
+
+  it("is zero on an empty strip", () => {
+    expect(liqTotals([])).toEqual({ long: 0, short: 0 });
+  });
+});
+
+describe("sizeLevel", () => {
+  it("bands by multiples of the threshold", () => {
+    expect(sizeLevel(1)).toBe(0);
+    expect(sizeLevel(1.9)).toBe(0);
+    expect(sizeLevel(2)).toBe(1);
+    expect(sizeLevel(4.9)).toBe(1);
+    expect(sizeLevel(5)).toBe(2);      // the chart's "monster" band
+    expect(sizeLevel(500)).toBe(2);
+  });
+
+  it("treats nonsense as the quietest band", () => {
+    expect(sizeLevel(0)).toBe(0);
+    expect(sizeLevel(-1)).toBe(0);
+    expect(sizeLevel(NaN)).toBe(0);
   });
 });

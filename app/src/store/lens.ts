@@ -6,7 +6,9 @@
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 
-import { liquidationParams, playSound, soundParams } from "../lib/audio";
+import {
+  liquidationParams, playSound, scheduleBatch, soundParams,
+} from "../lib/audio";
 import {
   BASE_THRESHOLDS,
   MA_DEFS,
@@ -197,13 +199,20 @@ function flushTrades(): void {
   // Sounds follow the same gates as the tape: you hear what you would see.
   if (!state.beepEnabled) return;
   const threshold = currentThreshold(state);
-  for (const trade of batch) {
-    const venueOn = state.activeVenues === null
-      || state.activeVenues.includes(trade.venue);
-    if (venueOn && trade.notional >= threshold) {
-      playSound(soundParams(trade.side, trade.notional / threshold));
-    }
-  }
+  // Hand the WHOLE batch to the scheduler rather than playing each note
+  // as we walk it. The server coalesces bursts into one message, so
+  // playing them in a loop started every note at the same instant — a
+  // chord. The scheduler spreads them across the audio clock, keeping
+  // each print's real offset within the burst.
+  const notes = batch
+    .filter((trade) => (state.activeVenues === null
+      || state.activeVenues.includes(trade.venue))
+      && trade.notional >= threshold)
+    .map((trade) => ({
+      params: soundParams(trade.side, trade.notional / threshold),
+      ts: trade.ts,
+    }));
+  scheduleBatch(notes);
 }
 
 function bufferTrade(trade: Trade): void {

@@ -61,46 +61,70 @@ export function appendCapped<T>(existing: T[], incoming: T[], cap: number): T[] 
   return merged.length > cap ? merged.slice(merged.length - cap) : merged;
 }
 
-/** Row tint deepens with size: a print at the threshold sits near 12%, a
-    monster saturates toward 50% — the tape's weight readable by colour. */
-export function tintPercent(magnitude: number): number {
-  if (!(magnitude > 0)) return 12;
-  return Math.min(50, 12 + Math.sqrt(magnitude) * 9);
+/** Size band for a row, 0..2 — the aggr.trade idea, adopted 2026-08-27
+    ("colors a bit more sharp").
+
+    A continuous tint made every row look the same washed-out shade,
+    because even a monster only reached 50% opacity over a dark surface.
+    Discrete bands let the big prints go fully saturated with white text
+    while small ones stay quiet, so size is legible at a glance instead of
+    requiring a careful look. Type size and weight follow the same band in
+    CSS, which is most of why aggr's tape reads so well. */
+export function sizeLevel(magnitude: number): 0 | 1 | 2 {
+  if (!(magnitude > 0)) return 0;
+  if (magnitude >= 5) return 2;    // "monster" — matches the chart's label
+  if (magnitude >= 2) return 1;
+  return 0;
 }
 
-export type TapeRow =
-  | { kind: "trade"; item: TradeItem }
-  | { kind: "liq"; item: LiqItem };
-
-/** The rows to show: both kinds interleaved by time, newest first, gated
-    by threshold, venue and symbol.
-
-    Merges the two already-time-ordered lists from their newest ends and
-    stops once `limit` rows are found, so the cost is bounded by what is
-    displayed rather than by how much history is held. */
-export function visibleRows(
-  trades: TradeItem[], liqs: LiqItem[], threshold: number,
-  activeVenues: string[] | null, symbol: string, limit: number,
-): TapeRow[] {
-  const keep = (item: { notional: number; venue: string; symbol?: string }) =>
-    item.notional >= threshold
+/** Gate shared by both lists: threshold, venue filter and symbol. */
+function passes(
+  item: { notional: number; venue: string; symbol?: string },
+  threshold: number, activeVenues: string[] | null, symbol: string,
+): boolean {
+  return item.notional >= threshold
     && (activeVenues === null || activeVenues.includes(item.venue))
     && (item.symbol === undefined || item.symbol === symbol);
+}
 
-  const rows: TapeRow[] = [];
-  let t = trades.length - 1;
-  let l = liqs.length - 1;
-  while (rows.length < limit && (t >= 0 || l >= 0)) {
-    const trade = t >= 0 ? trades[t] : null;
-    const liq = l >= 0 ? liqs[l] : null;
-    const takeTrade = trade !== null && (liq === null || trade.ts >= liq.ts);
-    if (takeTrade) {
-      if (keep(trade!)) rows.push({ kind: "trade", item: trade! });
-      t -= 1;
-    } else {
-      if (keep(liq!)) rows.push({ kind: "liq", item: liq! });
-      l -= 1;
-    }
+/** Newest-first trades only.
+
+    Liquidations used to be interleaved into this list. They are a
+    different kind of event — forced, non-discretionary — and mixing them
+    into the flow made both harder to read (Arash: "lets not mix them
+    up"), so they now have their own strip and their own reader below. */
+export function tradeRows(
+  trades: TradeItem[], threshold: number,
+  activeVenues: string[] | null, symbol: string, limit: number,
+): TradeItem[] {
+  const rows: TradeItem[] = [];
+  for (let i = trades.length - 1; i >= 0 && rows.length < limit; i -= 1) {
+    if (passes(trades[i], threshold, activeVenues, symbol)) rows.push(trades[i]);
   }
   return rows;
+}
+
+/** Newest-first liquidations, for the strip under the tape. Deliberately
+    NOT gated on the big-trade threshold: a forced exit is worth seeing at
+    any size, and the strip is short enough that it cannot flood. */
+export function liqRows(
+  liqs: LiqItem[], activeVenues: string[] | null, symbol: string, limit: number,
+): LiqItem[] {
+  const rows: LiqItem[] = [];
+  for (let i = liqs.length - 1; i >= 0 && rows.length < limit; i -= 1) {
+    if (passes(liqs[i], 0, activeVenues, symbol)) rows.push(liqs[i]);
+  }
+  return rows;
+}
+
+/** Long/short notional over the rows shown, for the strip's header —
+    "who is being forced out right now" in one line. */
+export function liqTotals(rows: LiqItem[]): { long: number; short: number } {
+  let long = 0;
+  let short = 0;
+  for (const row of rows) {
+    if (row.side === "long") long += row.notional;
+    else short += row.notional;
+  }
+  return { long, short };
 }

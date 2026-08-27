@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatPrice, formatUsd, formatUtcTime } from "./format";
+import { formatPrice, formatUsd, formatUtcTime, shortVenue } from "./format";
 
 describe("formatUsd", () => {
   it("covers each magnitude band", () => {
@@ -28,5 +28,31 @@ describe("formatUtcTime", () => {
   it("formats epoch ms as UTC HH:MM:SS", () => {
     expect(formatUtcTime(0)).toBe("00:00:00");
     expect(formatUtcTime(Date.UTC(2026, 7, 25, 17, 19, 25, 768))).toBe("17:19:25");
+  });
+});
+
+describe("shortVenue", () => {
+  it("abbreviates every venue the collector emits", () => {
+    expect(shortVenue("binance")).toBe("bin");
+    expect(shortVenue("coinbase")).toBe("cb");
+    expect(shortVenue("hyperliquid")).toBe("hl");
+    expect(shortVenue("kraken")).toBe("krk");
+  });
+
+  it("keeps spot and perp distinguishable — they trade at a basis", () => {
+    for (const spot of ["binance", "bybit", "okx"]) {
+      expect(shortVenue(`${spot}-fut`)).not.toBe(shortVenue(spot));
+      expect(shortVenue(`${spot}-fut`)).toMatch(/-f$/);
+    }
+  });
+
+  it("stays short enough for the row, and degrades for unknown venues", () => {
+    for (const venue of Object.keys({
+      binance: 0, "binance-fut": 0, bybit: 0, "bybit-fut": 0, okx: 0,
+      "okx-fut": 0, coinbase: 0, kraken: 0, hyperliquid: 0,
+    })) {
+      expect(shortVenue(venue).length).toBeLessThanOrEqual(5);
+    }
+    expect(shortVenue("some-new-dex").length).toBeLessThanOrEqual(6);
   });
 });

@@ -22,3 +22,25 @@ export function formatPrice(value: number): string {
 export function formatUtcTime(tsMs: number): string {
   return new Date(tsMs).toISOString().slice(11, 19);
 }
+
+/** Compact venue labels for the tape's 200px-wide rows.
+
+    "80,400.2 · bybit-fut · 15:39:45" needed 143px of a 206px row, so
+    rows wrapped to two lines and the tape had ragged 26/44/47px heights
+    (measured 2026-08-27). Abbreviating the venue is what trading UIs do
+    and it buys back the space without dropping the time.
+
+    The "-f" suffix is kept deliberately: spot and perp are different
+    instruments trading at a basis to each other, so collapsing
+    binance and binance-fut into one label would hide the thing most
+    worth noticing when they disagree. */
+const VENUE_SHORT: Record<string, string> = {
+  binance: "bin", "binance-fut": "bin-f",
+  bybit: "byb", "bybit-fut": "byb-f",
+  okx: "okx", "okx-fut": "okx-f",
+  coinbase: "cb", kraken: "krk", hyperliquid: "hl",
+};
+
+export function shortVenue(venue: string): string {
+  return VENUE_SHORT[venue] ?? venue.slice(0, 6);
+}

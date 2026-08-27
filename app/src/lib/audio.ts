@@ -2,9 +2,25 @@
    your eyes elsewhere. Design goals — musical (pentatonic degrees only, so
    overlapping blips can't be dissonant), informative (size → register:
    bigger prints sit lower and last longer; buys ring brighter than sells),
-   and restrained (rate-limited, quiet, silent in hidden tabs).
+   and restrained (quiet, silent in hidden tabs).
 
-   Split: `soundParams` is pure and unit-tested; `play*` touch WebAudio. */
+   SCHEDULING (rewritten 2026-08-27). Prints do not arrive one at a time:
+   the server coalesces a burst into one 100ms message and the client
+   flushes it in a single frame. The old code then called play() for each
+   print in a tight loop, every one starting at `currentTime` — so a burst
+   of nine trades fired as ONE CHORD, and a fixed 8-sounds-per-second cap
+   silently dropped whatever followed. Arash heard exactly that: batched,
+   not flowing.
+
+   Notes are now placed on the WebAudio clock instead. Each print keeps
+   its real offset from the first print of its batch, and a minimum gap
+   guarantees two prints in the same millisecond become a fast arpeggio
+   rather than a chord. A note that would land further ahead than
+   `maxAhead` is dropped, so a violent tape thins out instead of lagging
+   further and further behind the market.
+
+   Split: `soundParams`, `liquidationParams` and `scheduleStarts` are pure
+   and unit-tested; only `playAt`/`scheduleBatch` touch WebAudio. */
 
 export interface SoundParams {
   frequency: number;   // Hz
@@ -34,7 +50,10 @@ export function soundParams(side: "buy" | "sell", magnitude: number): SoundParam
   return {
     frequency: noteHz(base, degreesDown),
     duration: Math.min(0.5, 0.09 + Math.sqrt(magnitude) * 0.06),
-    gain: Math.min(0.16, 0.035 + Math.sqrt(magnitude) * 0.02),
+    // Raised 2026-08-27 ("make the sound more noticeable"). Safe to push
+    // because everything now runs through a limiter, so overlapping notes
+    // duck instead of clipping.
+    gain: Math.min(0.34, 0.08 + Math.sqrt(magnitude) * 0.04),
     type: side === "buy" ? "sine" : "triangle",
   };
 }
@@ -48,46 +67,130 @@ export function liquidationParams(side: "long" | "short", magnitude: number): So
     frequency: start,
     glideTo: side === "long" ? start / 2 : start * 2,
     duration: Math.min(0.7, 0.25 + Math.sqrt(magnitude) * 0.08),
-    gain: Math.min(0.2, 0.06 + Math.sqrt(magnitude) * 0.03),
+    gain: Math.min(0.42, 0.14 + Math.sqrt(magnitude) * 0.06),
     type: "sawtooth",
   };
+}
+
+// ------------------------------------------------------------ scheduling
+
+export const SCHEDULE = {
+  /** Start just ahead of the clock so the first note is never late. */
+  lookahead: 0.02,
+  /** Two prints in the same millisecond become an arpeggio, not a chord. */
+  minGap: 0.04,
+  /** Beyond this the queue is losing touch with the market: drop instead. */
+  maxAhead: 0.6,
+} as const;
+
+/** Pure core of the scheduler.
+
+    `offsets` are seconds from the first item of the batch — the real
+    spacing of the prints, so a burst keeps its actual rhythm. Returns a
+    start time per item (null = dropped, the tape is denser than the ear
+    can follow) plus the new busy-until cursor. */
+export function scheduleStarts(
+  offsets: number[], now: number, busyUntil: number,
+): { starts: (number | null)[]; busyUntil: number } {
+  const starts: (number | null)[] = [];
+  let cursor = busyUntil;
+  for (const offset of offsets) {
+    const earliest = now + SCHEDULE.lookahead + Math.max(0, offset);
+    const at = Math.max(earliest, cursor);
+    if (at > now + SCHEDULE.maxAhead) {
+      starts.push(null);       // too dense — thin out rather than lag
+      continue;
+    }
+    starts.push(at);
+    cursor = at + SCHEDULE.minGap;
+  }
+  return { starts, busyUntil: cursor };
 }
 
 // ------------------------------------------------------------- playback
 
 let audioContext: AudioContext | null = null;
-let playedInWindow = 0;
-let windowStartedAt = 0;
-const MAX_SOUNDS_PER_SECOND = 8; // a violent tape becomes texture, not noise
+let master: GainNode | null = null;
+let busyUntil = 0;
 
-function allowed(now: number): boolean {
-  if (now - windowStartedAt > 1000) {
-    windowStartedAt = now;
-    playedInWindow = 0;
+/** Attack ramp. Without it every note starts with a click, which reads as
+    harsh rather than loud — the ramp is why this can be louder AND
+    smoother at the same time. */
+const ATTACK = 0.006;
+
+function chain(): { ctx: AudioContext; out: GainNode } | null {
+  try {
+    if (!audioContext) {
+      audioContext = new AudioContext();
+      master = audioContext.createGain();
+      master.gain.value = 0.9;
+      // Soft limiter: a burst of overlapping notes ducks instead of
+      // clipping, so per-note gain can be raised without distortion.
+      const limiter = audioContext.createDynamicsCompressor();
+      limiter.threshold.value = -14;
+      limiter.knee.value = 12;
+      limiter.ratio.value = 8;
+      limiter.attack.value = 0.003;
+      limiter.release.value = 0.18;
+      master.connect(limiter).connect(audioContext.destination);
+    }
+    // Browsers suspend contexts created before a gesture; resuming is
+    // free when it is already running.
+    if (audioContext.state === "suspended") void audioContext.resume();
+    return { ctx: audioContext, out: master! };
+  } catch {
+    return null;    // Audio is decoration — never break the tape.
   }
-  return ++playedInWindow <= MAX_SOUNDS_PER_SECOND;
 }
 
-export function playSound(params: SoundParams): void {
+/** Play one note at an absolute time on the audio clock (default: now). */
+export function playAt(params: SoundParams, at?: number): void {
   if (document.visibilityState === "hidden") return;
-  if (!allowed(performance.now())) return;
+  const nodes = chain();
+  if (!nodes) return;
   try {
-    audioContext = audioContext ?? new AudioContext();
-    const oscillator = audioContext.createOscillator();
-    const gain = audioContext.createGain();
-    const now = audioContext.currentTime;
+    const { ctx, out } = nodes;
+    const start = at ?? ctx.currentTime + SCHEDULE.lookahead;
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
     oscillator.type = params.type;
-    oscillator.frequency.setValueAtTime(params.frequency, now);
+    oscillator.frequency.setValueAtTime(params.frequency, start);
     if (params.glideTo) {
       oscillator.frequency.exponentialRampToValueAtTime(
-        params.glideTo, now + params.duration);
+        params.glideTo, start + params.duration);
     }
-    gain.gain.setValueAtTime(params.gain, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + params.duration);
-    oscillator.connect(gain).connect(audioContext.destination);
-    oscillator.start(now);
-    oscillator.stop(now + params.duration);
+    // exponential ramps cannot touch zero, hence the epsilons.
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(params.gain, start + ATTACK);
+    gain.gain.exponentialRampToValueAtTime(0.001, start + params.duration);
+    oscillator.connect(gain).connect(out);
+    oscillator.start(start);
+    oscillator.stop(start + params.duration);
   } catch {
-    // Audio is decoration — a blocked AudioContext must never break the tape.
+    // Blocked or exhausted AudioContext: stay silent, keep rendering.
   }
+}
+
+/** Spread one arriving batch across the clock, preserving its real rhythm.
+    `ts` is the print's exchange timestamp in ms; only differences within
+    the batch are used, so a skewed venue clock cannot push notes around. */
+export function scheduleBatch(items: { params: SoundParams; ts: number }[]): void {
+  if (items.length === 0) return;
+  if (document.visibilityState === "hidden") return;
+  const nodes = chain();
+  if (!nodes) return;
+  const now = nodes.ctx.currentTime;
+  const first = Math.min(...items.map((item) => item.ts));
+  const offsets = items.map((item) => (item.ts - first) / 1000);
+  const plan = scheduleStarts(offsets, now, busyUntil);
+  busyUntil = plan.busyUntil;
+  plan.starts.forEach((at, index) => {
+    if (at !== null) playAt(items[index].params, at);
+  });
+}
+
+/** One-off (liquidations): still queued, so it never lands on top of a
+    trade note already scheduled. */
+export function playSound(params: SoundParams): void {
+  scheduleBatch([{ params, ts: 0 }]);
 }

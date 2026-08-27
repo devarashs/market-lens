@@ -22,6 +22,9 @@
   --color-gold: #c9a35a;
   --color-liq-long: #c46fae;
   --color-liq-short: #8a7ac2;
+  /* Tape-only saturated fills for prints well above threshold. */
+  --color-bid-hot: #35bd77;
+  --color-ask-hot: #e5453a;
   --radius-card: 10px;
 }
 
@@ -30,6 +33,7 @@
   --text: var(--color-text); --muted: var(--color-muted);
   --border: var(--color-border); --accent: var(--color-accent);
   --bid: var(--color-bid); --ask: var(--color-ask);
+  --bid-hot: var(--color-bid-hot); --ask-hot: var(--color-ask-hot);
 }
 
 * { box-sizing: border-box; }
@@ -251,8 +255,9 @@ body { margin: 0; background: var(--bg); color: var(--text);
   vertical-align: -1px; margin-right: 3px;
 }
 .tape {
-  border-left: 1px solid var(--border); overflow-y: auto; padding: 12px 14px;
+  border-left: 1px solid var(--border); padding: 12px 14px;
   background: var(--surface);
+  display: flex; flex-direction: column; min-height: 0;
 }
 .tape h2 { font-size: 13px; margin: 0 0 10px; }
 /* ------------------------------------------------------- orderbook ladder */
@@ -282,10 +287,22 @@ body { margin: 0; background: var(--bg); color: var(--text);
 }
 .ladder-mid b { font-size: 16px; }
 .ladder select { margin-left: 6px; }
-#tape-list { list-style: none; margin: 0; padding: 0; font-size: 12px; }
+#tape-list {
+  list-style: none; margin: 0; padding: 0; font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  flex: 1 1 auto; overflow-y: auto; min-height: 0;
+}
 #tape-list li {
   display: flex; justify-content: space-between; gap: 8px;
+  align-items: baseline; flex-wrap: nowrap;
   padding: 4px 6px; border-radius: 6px; margin-bottom: 2px;
+}
+/* Single-line rows. Ragged heights make a tape much harder to scan than
+   a truncated venue name does — the size never truncates, only the meta. */
+#tape-list li > span:first-child { flex: 0 0 auto; white-space: nowrap; }
+#tape-list .px {
+  min-width: 0; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
 }
 /* New prints ease in rather than snapping into place. Only genuinely new
    rows mount (each row is memoised on a stable id), so this animates
@@ -298,11 +315,63 @@ body { margin: 0; background: var(--bg); color: var(--text);
 @media (prefers-reduced-motion: reduce) {
   #tape-list li.tape-row { animation: none; }
 }
-#tape-list li.buy  { background: color-mix(in srgb, var(--bid) 14%, transparent); }
-#tape-list li.sell { background: color-mix(in srgb, var(--ask) 14%, transparent); }
-#tape-list li.liq-long  { background: color-mix(in srgb, var(--color-liq-long) 22%, transparent); }
-#tape-list li.liq-short { background: color-mix(in srgb, var(--color-liq-short) 22%, transparent); }
+/* Level 0 — at threshold: quiet, tinted, secondary text muted. */
+#tape-list li.buy  { background: color-mix(in srgb, var(--bid) 24%, transparent); }
+#tape-list li.sell { background: color-mix(in srgb, var(--ask) 24%, transparent); }
 #tape-list .px { color: var(--muted); }
+
+/* Level 1 — 2x threshold: solid fill, white text, a step larger. */
+#tape-list li.lvl-1 { font-size: 13px; color: #fff; }
+#tape-list li.lvl-1.buy  { background: var(--bid-hot); }
+#tape-list li.lvl-1.sell { background: var(--ask-hot); }
+
+/* Level 2 — 5x threshold, the "monster" band the chart also labels. */
+#tape-list li.lvl-2 { font-size: 14px; font-weight: 600; color: #fff; }
+#tape-list li.lvl-2.buy  { background: var(--bid-hot); }
+#tape-list li.lvl-2.sell { background: var(--ask-hot); }
+
+#tape-list li.lvl-1 .px,
+#tape-list li.lvl-2 .px { color: rgba(255, 255, 255, 0.82); font-weight: 400; }
+
+/* ---------------------------------------------- liquidation strip
+   Forced flow lives under the tape rather than inside it: a liquidation
+   is not a discretionary print, and interleaving the two made both
+   harder to read. Violet family, deliberately outside the bid/ask hues. */
+.liq-strip {
+  flex: 0 0 auto; margin-top: 10px; padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.liq-strip h3 {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 8px; margin: 0 0 6px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.liq-totals {
+  text-transform: none; letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+.liq-long-c { color: var(--color-liq-long); }
+.liq-short-c { color: var(--color-liq-short); }
+.liq-list {
+  list-style: none; margin: 0; padding: 0;
+  font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.liq-row {
+  display: flex; justify-content: space-between; gap: 8px;
+  flex-wrap: nowrap; white-space: nowrap;
+  padding: 3px 6px; border-radius: 4px; margin-bottom: 2px;
+  animation: tape-in 220ms ease-out;
+}
+.liq-row > span:first-child { flex: 0 0 auto; }
+.liq-row .px { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.liq-row.liq-long  { background: color-mix(in srgb, var(--color-liq-long) 30%, transparent); }
+.liq-row.liq-short { background: color-mix(in srgb, var(--color-liq-short) 30%, transparent); }
+.liq-row .px { color: var(--muted); }
+.liq-empty { font-size: 11px; margin: 2px 0 0; }
+@media (prefers-reduced-motion: reduce) {
+  .liq-row { animation: none; }
+}
 .muted { color: var(--muted); }
 .attribution {
   padding: 6px 18px; border-top: 1px solid var(--border); font-size: 11px;
