@@ -65,6 +65,7 @@ from market_lens.positioning import (
     parse_binance_ratio,
     parse_bitfinex_sizes,
 )
+from market_lens import health
 from market_lens.grouping import book_span, grouping_ladder, resolve_bin
 from market_lens.stablecoins import (
     LLAMA_CHART_URL, parse_supply_series, summarise as summarise_stables,
@@ -73,6 +74,7 @@ from market_lens.store import LensStore
 from market_lens import watchlist
 from market_lens.symbolinfo import COINGECKO_IDS, build as build_symbol_info
 from market_lens.venues import (
+    BOOK_EMIT_LEVELS,
     binance_adapter,
     binance_futures_trades_adapter,
     binance_liquidation_adapter,
@@ -295,11 +297,16 @@ class LensState:
         # endpoint so the cost of the 24h rebuild is visible rather than
         # guessed at.
         self.watchlist_seed_ms: int | None = None
+        # Liveness: a process can be up and recording nothing, so /api/health
+        # reports the age of the most recent trade from ANY venue.
+        self.started_at: float = time.time()
+        self.last_trade_at: float | None = None
 
     def on_book(self, venue: str, symbol: str, book: dict) -> None:
         self.books[(symbol, venue)] = book
 
     def on_trade(self, venue: str, symbol: str, trade: dict) -> None:
+        self.last_trade_at = time.time()
         self.accumulators[symbol].on_trade(symbol, trade, venue)
         threshold = SYMBOLS[symbol].big_trade_usd
         # Forward from 10% of threshold: the chart wants aggregated-flow
@@ -791,6 +798,22 @@ async def stablecoin_poll() -> None:
             except Exception as error:  # noqa: BLE001 — reference data is best-effort
                 print(f"stablecoins: {error.__class__.__name__}: {error}", flush=True)
             await asyncio.sleep(STABLECOIN_POLL_SECONDS)
+
+
+async def health_handler(request: web.Request) -> web.Response:
+    """Process and liveness metrics. Cheap by design — no archive counts,
+    so it can be polled without becoming the load it measures."""
+    reading = health.snapshot(
+        STATE.started_at, time.time(),
+        clients=len(STATE.clients),
+        books=len(STATE.books),
+        last_trade_at=STATE.last_trade_at,
+        symbols=len(SYMBOLS),
+    )
+    reading["watchlistSeedMs"] = STATE.watchlist_seed_ms
+    reading["bookEmitLevels"] = BOOK_EMIT_LEVELS
+    # 503 when degraded so a probe can act on the status line alone.
+    return web.json_response(reading, status=200 if reading["status"] == "ok" else 503)
 
 
 async def markets_handler(request: web.Request) -> web.Response:
@@ -1327,6 +1350,7 @@ def build_app() -> web.Application:
     # a client route, and an API path that shadows a page path breaks
     # only on direct navigation, which is the easiest thing to miss.
     app.router.add_get("/api/markets", markets_handler)
+    app.router.add_get("/api/health", health_handler)
     assets_dir = WEB_DIR / "assets"
     if assets_dir.exists():  # absent until the first `npm run build`
         app.router.add_static("/assets/", assets_dir)

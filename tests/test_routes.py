@@ -64,3 +64,9 @@ def test_the_spa_catch_all_is_still_last_resort():
     """Deep links only work because an unclaimed path falls through to the
     app; if this route ever disappears, /markets and /docs break on reload."""
     assert "/{tail:.*}" in server_routes()
+
+
+def test_health_is_under_api_too():
+    """Same rule as the watchlist: a data route must not be able to shadow
+    a page the SPA might add later."""
+    assert "/api/health" in server_routes()
