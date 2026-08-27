@@ -213,7 +213,7 @@ server runs it also records depth snapshots and big trades to
 server needs no Node. To work on the UI: <code>cd app &amp;&amp; npm install
 &amp;&amp; npm run build</code> (or <code>npm run dev</code> for hot reload,
 proxied to the collector).</p>`},{id:"symbols-routing",title:"Symbols, routing & URLs",body:`
-<p>51 symbols in four groups — <b>crypto</b>, <b>stocks</b>, <b>indices</b>
+<p>52 symbols in four groups — <b>crypto</b>, <b>stocks</b>, <b>indices</b>
 and <b>commodities</b>. Open the picker in the header (or press <b>/</b>)
 and search by ticker or company name: "nvidia", "hynix", "micro" all
 find their symbol. Arrow keys and enter select; every row is a real link,

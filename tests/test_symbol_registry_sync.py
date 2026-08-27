@@ -65,3 +65,17 @@ def test_seconds_capability_follows_the_binance_listing():
                   for key, spec in SYMBOLS.items()
                   if rows[key]["seconds"] != (spec.binance is not None)}
     assert mismatched == {}
+
+
+DOCS_TS = (Path(__file__).resolve().parent.parent
+           / "app" / "src" / "pages" / "docs-content.ts")
+DOCS_COUNT = re.compile(r"<p>(\d+) symbols in four groups")
+
+
+def test_the_docs_symbol_count_is_not_stale():
+    """The docs open by stating how many symbols exist. Adding MON made
+    that sentence wrong (it still said 51), which is the kind of drift
+    nobody notices — so it is checked rather than remembered."""
+    match = DOCS_COUNT.search(DOCS_TS.read_text(encoding="utf-8"))
+    assert match is not None, "the symbol-count sentence moved or was reworded"
+    assert int(match[1]) == len(SYMBOLS)
