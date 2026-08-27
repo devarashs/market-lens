@@ -343,7 +343,32 @@ overlapping): buys chime a sine an octave above sells' triangle, and bigger
 prints sit <i>lower</i>, ring longer, and play louder, so you can read the
 flow's size and side with your eyes elsewhere. Forced liquidations wail: a
 sawtooth glide, downward when longs die, upward when shorts do.
-Rate-limited to 8 sounds/s; silent in hidden tabs.</p>
+Silent in hidden tabs.</p>
+<p><b>Timing.</b> Prints do not arrive one at a time — the collector
+coalesces a burst into a single 100ms message — so notes are placed on the
+audio clock rather than played as they are unpacked. Each print keeps its
+real offset within its batch, a minimum gap turns same-millisecond prints
+into a fast arpeggio instead of a chord, and anything that would land more
+than ~0.6s ahead is dropped so a violent tape thins out rather than
+falling behind the market. Everything runs through a master limiter, which
+is what lets the notes be loud without clipping when they overlap.</p>
+<p><b>Liquidations are not in this list</b> (changed 2026-08-27). They sit
+in their own strip beneath it, with running long/short totals. A forced
+exit is not a discretionary print — nobody chose it — so interleaving the
+two made both harder to read. The strip deliberately ignores the big-trade
+threshold, because a liquidation is worth seeing at any size, and it
+carries timestamps: liquidations are rare enough that seven rows can span
+half an hour, and without a time an old forced exit reads as a current
+one.</p>
+<p><b>Row weight is banded, not graded.</b> A print at the threshold is a
+quiet tint; at 2× it goes solid with white text; at 5× — the same
+"monster" band the chart labels — it also gains size and weight. A single
+continuous tint was the earlier design and it made every row look alike,
+because even a monster only reached half opacity against a dark surface.
+Venue names abbreviate (<code>bin-f</code>, <code>okx-f</code>,
+<code>hl</code>) so rows stay on one line; the <code>-f</code> suffix is
+kept because spot and perp trade at a basis, and that disagreement is
+worth seeing.</p>
 <p>The slider re-filters both views from ×0.1 to ×4 of the base threshold
 (default ×0.5), retroactively. The server forwards flow from 10% of the
 threshold so the chart carries aggregated-trade texture, not just whales;
@@ -382,9 +407,9 @@ quiet.</p>
 forced liquidation from the venue's public stream
 draws as a violet <b>×</b> at its fill price — magenta when a <i>long</i>
 died, blue-violet when a <i>short</i> did; monsters (≥$250K) get a label,
-and the footer shows rolling 1h totals; they also appear inline in the
-Big Trades column as violet ✕ rows, and — with sound on — as directional
-wails. Every print is archived to
+and the footer shows rolling 1h totals; they also fill the <b>liquidation
+strip</b> beneath the Big Trades column, and — with sound on — sound as
+directional wails. Every print is archived to
 <code>lens.db</code> — this history has no free source and cannot be
 backfilled, so the archive is the moat. (HL-only symbols like HYPE have no
 Binance stream and show none.)</p>
