@@ -64,8 +64,12 @@ def nice_bin(value: float) -> float:
 def book_span(books: list[dict], reference_price: float) -> float:
     """How far the farthest quoted level sits from price, across venues.
 
-    Books arrive sorted outward from the touch, so this reads the last
-    level of each side rather than scanning them all.
+    Books arrive sorted outward from the touch — LocalBook.emit uses
+    heapq.nlargest/nsmallest, which return sorted output, and both REST
+    sources sort too — so this reads the last level of each side rather
+    than scanning every level of every venue on each broadcast tick. An
+    unsorted book would only ever understate the span, narrowing the
+    ladder rather than offering a rung the book cannot fill.
     """
     if not (reference_price > 0):
         return 0.0
