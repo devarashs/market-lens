@@ -22,6 +22,7 @@ import {
   appendCapped, asLiqItem, asTradeItem, type LiqItem, type TradeItem,
 } from "../lib/tape";
 import type {
+  CandleLoad,
   Candle,
   ConnectionStatus,
   DepthMessage,
@@ -85,6 +86,7 @@ interface LensState {
   positioningMetric: string;
   metrics: MetricsMap;
   candleRows: Candle[];
+  candleLoad: CandleLoad;
   activeVenues: string[] | null; // null = all venues
   /** Per-symbol price grouping, an absolute bin in quote units. Was a
       multiplier on the symbol's base bin until 2026-08-27, which meant a
@@ -108,6 +110,7 @@ interface LensState {
   setBeepEnabled(on: boolean): void;
   setPositioningMetric(metric: string): void;
   setConnection(status: ConnectionStatus): void;
+  setCandleLoad(load: CandleLoad): void;
   setCandleRows(rows: Candle[]): void;
   setReadout(readout: ReadoutData | null): void;
   /** Clear everything the socket streams — called on symbol switch and on
@@ -246,6 +249,7 @@ export const useLensStore = create<LensState>()(
     positioningMetric: stored.positioningMetric ?? "",
     metrics: {},
     candleRows: [],
+    candleLoad: { state: "loading", attempt: 0 },
     activeVenues: null,
     binSizes: stored.binSizes ?? {},
     layers: { ...DEFAULT_LAYERS, ...stored.layers },
@@ -323,6 +327,7 @@ export const useLensStore = create<LensState>()(
         symbol,
         timeframe: legalTimeframe(symbol, get().timeframe),
         activeVenues: null, candleRows: [],
+        candleLoad: { state: "loading", attempt: 0 },
       });
     },
 
@@ -331,7 +336,8 @@ export const useLensStore = create<LensState>()(
       if (legal === get().timeframe) return;
       // Merge-based candle updates make stale rows poisonous across a
       // timeframe switch — clear so the next poll starts clean.
-      set({ timeframe: legal, candleRows: [] });
+      set({ timeframe: legal, candleRows: [],
+            candleLoad: { state: "loading", attempt: 0 } });
     },
 
     setChartStyle(style) {
@@ -374,6 +380,9 @@ export const useLensStore = create<LensState>()(
     },
     setCandleRows(rows) {
       set({ candleRows: rows });
+    },
+    setCandleLoad(load) {
+      set({ candleLoad: load });
     },
     setReadout(readout) {
       set({ readout });

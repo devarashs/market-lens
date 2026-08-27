@@ -41,17 +41,30 @@ export function useCandlePolling(): void {
         );
         const rows: Candle[] | { error: string } = await response.json();
         if (cancelled) return;
-        if (!Array.isArray(rows)) throw new Error("klines payload");
+        if (!Array.isArray(rows)) {
+          throw new Error(
+            typeof (rows as { error?: string }).error === "string"
+              ? (rows as { error: string }).error
+              : "unexpected response");
+        }
         attempt = 0;
         // Merge, don't replace: pan-left backfill lives in candleRows
         // and a poll must never throw that history away.
         const store = useLensStore.getState();
         store.setCandleRows(mergeCandles(store.candleRows, rows));
-      } catch {
+        store.setCandleLoad({ state: "ready", attempt: 0 });
+      } catch (error) {
         // An abort means this pair was superseded — the new effect is
         // already loading, and retrying here would fight it.
         if (cancelled || controller.signal.aborted) return;
         attempt += 1;
+        // Say so on screen. A silent retry is why a failed load was
+        // indistinguishable from a chart that simply never drew.
+        useLensStore.getState().setCandleLoad({
+          state: "retrying",
+          attempt,
+          reason: error instanceof Error ? error.message : "request failed",
+        });
         retryTimer = setTimeout(load, backoffDelay(attempt));
       }
     }

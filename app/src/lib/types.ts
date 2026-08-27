@@ -110,3 +110,18 @@ export type ServerMessage =
   | { type: "metrics"; data: MetricsMap };
 
 export type ConnectionStatus = "connecting" | "live" | "reconnecting" | "stale";
+
+/** How the candle load is going, so the chart can say so.
+
+    The chart used to render nothing while candles were missing, which is
+    indistinguishable from a chart that has quietly failed — the exact
+    complaint that "some things show, candles do not" (Arash, twice). A
+    load that is retrying should look different from one that never
+    started. */
+export interface CandleLoad {
+  state: "loading" | "ready" | "retrying";
+  /** Consecutive failures. 0 whenever the last attempt succeeded. */
+  attempt: number;
+  /** Why the last attempt failed, for the retrying state. */
+  reason?: string;
+}

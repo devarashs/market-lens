@@ -506,6 +506,45 @@ body { margin: 0; background: var(--bg); color: var(--text);
   .markets-table th:nth-child(5), .markets-table td:nth-child(5) { display: none; }
 }
 
+/* ------------------------------------------------- chart load states
+   Absolutely positioned inside .chart-wrap (which is position:relative —
+   the countdown depends on that too). Sits above the canvas but below the
+   footer controls, and unmounts entirely once candles exist. */
+.chart-state {
+  position: absolute; inset: 0; z-index: 3;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
+}
+.chart-state-card {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 20px 26px; border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid var(--border);
+  font-size: 12px; text-align: center;
+  pointer-events: auto;
+}
+.chart-state-card.is-error { border-color: color-mix(in srgb, var(--ask) 55%, var(--border)); }
+.chart-state-card b { font-size: 13px; }
+.chart-state-card .mini-btn { margin-top: 2px; }
+
+/* Three bars settling in sequence: a candle chart drawing itself. Only
+   transform and opacity, so it composites and costs no layout. */
+.chart-state-bars { display: flex; align-items: flex-end; gap: 5px; height: 26px; }
+.chart-state-bars i {
+  width: 5px; height: 100%; border-radius: 2px;
+  background: var(--accent); transform-origin: bottom;
+  animation: chart-state-bar 1.15s ease-in-out infinite;
+}
+.chart-state-bars i:nth-child(2) { animation-delay: 0.14s; }
+.chart-state-bars i:nth-child(3) { animation-delay: 0.28s; }
+@keyframes chart-state-bar {
+  0%, 100% { transform: scaleY(0.35); opacity: 0.45; }
+  50%      { transform: scaleY(1);    opacity: 0.95; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chart-state-bars i { animation: none; transform: scaleY(0.7); }
+}
+
 /* --------------------------------------------------------- timeframes */
 .tf-picker { position: relative; display: inline-flex; }
 .tf-more { font-variant-numeric: tabular-nums; }
