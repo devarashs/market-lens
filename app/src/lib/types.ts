@@ -47,6 +47,9 @@ export interface DepthMessage {
   venues: string[];
   activeVenues: string[];
   bin: number;
+  /** Selectable grouping sizes for this symbol at its current price,
+      computed server-side; the only values a subscribe may request. */
+  binLadder?: number[];
   bids: DepthLevel[];
   asks: DepthLevel[];
   mid: number | null;

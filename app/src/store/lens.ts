@@ -84,7 +84,10 @@ interface LensState {
   metrics: MetricsMap;
   candleRows: Candle[];
   activeVenues: string[] | null; // null = all venues
-  binMults: Record<string, number>; // per-symbol price-grouping multiplier
+  /** Per-symbol price grouping, an absolute bin in quote units. Was a
+      multiplier on the symbol's base bin until 2026-08-27, which meant a
+      different fraction of price on every symbol. */
+  binSizes: Record<string, number>;
   layers: LayerFlags;
   maVisible: Record<string, boolean>;
   beepEnabled: boolean;
@@ -96,7 +99,7 @@ interface LensState {
   setChartStyle(style: ChartStyle): void;
   setThresholdMult(mult: number): void;
   setActiveVenues(venues: string[] | null): void;
-  setBinMult(symbol: Symbol, mult: number): void;
+  setBinSize(symbol: Symbol, bin: number): void;
   setLayer(layer: keyof LayerFlags, on: boolean): void;
   setLayers(next: Partial<LayerFlags>): void;
   setMaVisible(id: string, on: boolean): void;
@@ -128,7 +131,7 @@ const PREFS_KEY = "lens-prefs-v2";
 interface StoredPrefs {
   chartStyle: ChartStyle;
   thresholdMult: number;
-  binMults: Record<string, number>;
+  binSizes: Record<string, number>;
   layers: LayerFlags;
   maVisible: Record<string, boolean>;
   beepEnabled: boolean;
@@ -158,7 +161,7 @@ function savePrefs(state: LensState): void {
   const prefs: StoredPrefs = {
     chartStyle: state.chartStyle,
     thresholdMult: state.thresholdMult,
-    binMults: state.binMults,
+    binSizes: state.binSizes,
     layers: state.layers,
     maVisible: state.maVisible,
     beepEnabled: state.beepEnabled,
@@ -233,7 +236,7 @@ export const useLensStore = create<LensState>()(
     metrics: {},
     candleRows: [],
     activeVenues: null,
-    binMults: stored.binMults ?? {},
+    binSizes: stored.binSizes ?? {},
     layers: { ...DEFAULT_LAYERS, ...stored.layers },
     maVisible: Object.fromEntries(
       MA_DEFS.map((def) => [def.id, stored.maVisible?.[def.id] ?? false]),
@@ -331,8 +334,8 @@ export const useLensStore = create<LensState>()(
     setActiveVenues(venues) {
       set({ activeVenues: venues });
     },
-    setBinMult(symbol, mult) {
-      set({ binMults: { ...get().binMults, [symbol]: mult } });
+    setBinSize(symbol, bin) {
+      set({ binSizes: { ...get().binSizes, [symbol]: bin } });
       savePrefs(get());
     },
     setLayer(layer, on) {

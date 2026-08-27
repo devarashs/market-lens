@@ -8,10 +8,12 @@ import { useLensStore } from "../store/lens";
 let socket: LensSocket | null = null;
 
 function sendSubscribe(): void {
-  const { symbol, activeVenues, binMults } = useLensStore.getState();
+  const { symbol, activeVenues, binSizes } = useLensStore.getState();
   socket?.send({
     cmd: "subscribe", symbol, venues: activeVenues ?? undefined,
-    binMult: binMults[symbol] ?? 1,
+    // Absent = let the server choose the symbol's default rung. Whatever
+    // is sent is a request: the server snaps it to its own ladder.
+    bin: binSizes[symbol],
   });
 }
 
@@ -38,5 +40,5 @@ export function startConnection(): void {
   // keys each client's stream on its latest subscribe command).
   useLensStore.subscribe((state) => state.symbol, sendSubscribe);
   useLensStore.subscribe((state) => state.activeVenues, sendSubscribe);
-  useLensStore.subscribe((state) => state.binMults, sendSubscribe);
+  useLensStore.subscribe((state) => state.binSizes, sendSubscribe);
 }

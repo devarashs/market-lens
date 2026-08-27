@@ -145,10 +145,6 @@ export const COLORS = {
   liqShortRgb: "138,122,194",  // shorts died (forced buys)
 } as const;
 
-/** Price-grouping multipliers on the symbol's base bin — must mirror the
-    server's allowed set (ws_handler). 0.2x reaches exchange tick size. */
-export const BIN_MULTS = [0.2, 0.5, 1, 2, 5, 10] as const;
-
 export const MAX_TAPE_ROWS = 120;
 export const MAX_TRADES = 600; // in-memory big-trade store (history + live)
 

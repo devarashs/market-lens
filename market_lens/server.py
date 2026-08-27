@@ -65,6 +65,7 @@ from market_lens.positioning import (
     parse_binance_ratio,
     parse_bitfinex_sizes,
 )
+from market_lens.grouping import book_span, grouping_ladder, resolve_bin
 from market_lens.stablecoins import (
     LLAMA_CHART_URL, parse_supply_series, summarise as summarise_stables,
 )
@@ -836,7 +837,7 @@ async def broadcast_depth_loop() -> None:
         wanted: dict[tuple, list[web.WebSocketResponse]] = defaultdict(list)
         for ws, sub in STATE.clients.items():
             venue_key = tuple(sorted(sub["venues"])) if sub["venues"] else None
-            wanted[(sub["symbol"], venue_key, sub.get("bin_mult", 1.0))].append(ws)
+            wanted[(sub["symbol"], venue_key, sub.get("bin"))].append(ws)
         # Every symbol is archived. Order-book history has no free source
         # and cannot be backfilled, so recording only what someone happened
         # to be watching would leave exactly the gaps a later study needs.
@@ -853,14 +854,22 @@ async def broadcast_depth_loop() -> None:
                     aggregate_books(books, spec.price_bin, DEPTH_BINS_PER_SIDE))
                 last_recorded[symbol] = time.time()
 
-        for (symbol, venue_key, bin_mult), sockets in wanted.items():
+        for (symbol, venue_key, requested_bin), sockets in wanted.items():
             venues = list(venue_key) if venue_key else None
             venue_books = STATE.venue_books_for(symbol, venues)
             if not venue_books:
                 continue
             spec = SYMBOLS[symbol]
-            effective_bin = round(spec.price_bin * bin_mult, 10)
+            reference_price = (STATE.accumulators[symbol].last_price
+                               or (STATE.metrics.get(symbol) or {}).get("last") or 0.0)
             books = [book for _, book in venue_books]
+            # The ladder is capped by how far this book actually reaches,
+            # so its coarsest rung always renders a usable number of rows.
+            # It therefore reflects the client's venue filter too.
+            span = book_span(books, reference_price)
+            bin_ladder = grouping_ladder(reference_price, spec.price_bin, span)
+            effective_bin = resolve_bin(reference_price, spec.price_bin,
+                                        requested_bin, span)
             profile = aggregate_books(books, effective_bin, DEPTH_BINS_PER_SIDE)
             accumulator = STATE.accumulators[symbol]
 
@@ -917,6 +926,7 @@ async def broadcast_depth_loop() -> None:
                 "venues": STATE.venues_for(symbol),
                 "activeVenues": venues or STATE.venues_for(symbol),
                 "bin": effective_bin,
+                "binLadder": bin_ladder,
                 **profile,
                 "imbalance": imbalance,
                 "walls": attributed_walls,
@@ -1178,19 +1188,20 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                 continue
             if command.get("cmd") == "subscribe" and command.get("symbol") in SYMBOLS:
                 venues = command.get("venues")
-                # Price-grouping control ("compression"): a multiplier on
-                # the symbol's base bin, from a fixed set so a client can't
-                # request a million bins. 0.2x reaches exchange tick size.
+                # Price-grouping control ("compression"), now an ABSOLUTE bin
+                # in quote units rather than a multiplier on the symbol's
+                # configured bin — the multiplier meant 0.13% on BTC and
+                # 2.5% on DOGE, so the same setting was a different thing
+                # per symbol. Resolved against the ladder at broadcast
+                # time; a client may ask for anything.
                 try:
-                    bin_mult = float(command.get("binMult", 1.0))
+                    requested_bin = float(command.get("bin", 0)) or None
                 except (TypeError, ValueError):
-                    bin_mult = 1.0
-                if bin_mult not in (0.2, 0.5, 1.0, 2.0, 5.0, 10.0):
-                    bin_mult = 1.0
+                    requested_bin = None
                 STATE.clients[ws] = {
                     "symbol": command["symbol"],
                     "venues": venues if isinstance(venues, list) and venues else None,
-                    "bin_mult": bin_mult,
+                    "bin": requested_bin,
                 }
                 await send_symbol_seed(ws, command["symbol"])
     finally:

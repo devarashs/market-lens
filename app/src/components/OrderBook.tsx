@@ -3,10 +3,11 @@
    price with a depth bar behind each row scaled by cumulative share.
    The middle row shows the last trade price (colored by aggressor side)
    and the aggregated spread. The "grp" select is the price-compression
-   control — a multiplier on the symbol's base bin, applied server-side
-   per client (0.2× reaches exchange tick size). */
+   control: absolute bin sizes drawn from the server's own ladder, which
+   is scaled to the symbol's price, so the options offered are exactly the
+   ones the server will honour. */
 
-import { BIN_MULTS } from "../lib/config";
+import { formatBin } from "../lib/grouping";
 import { formatUsd } from "../lib/format";
 import { useLensStore } from "../store/lens";
 
@@ -32,8 +33,7 @@ export function OrderBook() {
   const depth = useLensStore((s) => s.depth);
   const trades = useLensStore((s) => s.trades);
   const symbol = useLensStore((s) => s.symbol);
-  const binMult = useLensStore((s) => s.binMults[s.symbol] ?? 1);
-  const setBinMult = useLensStore((s) => s.setBinMult);
+  const setBinSize = useLensStore((s) => s.setBinSize);
 
   if (!depth) {
     return (
@@ -70,15 +70,14 @@ export function OrderBook() {
         Orderbook{" "}
         <select
           className="mini-btn"
-          value={binMult}
+          value={depth.bin}
           aria-label="Price grouping"
-          onChange={(event) => setBinMult(symbol, parseFloat(event.target.value))}
+          onChange={(event) => setBinSize(symbol, parseFloat(event.target.value))}
         >
-          {BIN_MULTS.map((mult) => (
-            <option key={mult} value={mult}>grp ×{mult}</option>
+          {(depth.binLadder?.length ? depth.binLadder : [depth.bin]).map((bin) => (
+            <option key={bin} value={bin}>grp {formatBin(bin)}</option>
           ))}
         </select>
-        <span className="muted"> bin {depth.bin}</span>
       </h2>
       <div className="ladder">
         <div className="ladder-side asks">
