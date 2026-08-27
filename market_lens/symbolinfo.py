@@ -27,7 +27,7 @@ COINGECKO_IDS = {
     "TAO": "bittensor", "ENA": "ethena", "PUMP": "pump-fun",
     "FARTCOIN": "fartcoin", "LTC": "litecoin", "ADA": "cardano",
     "AVAX": "avalanche-2", "TRUMP": "official-trump", "NEAR": "near",
-    "XPL": "plasma",
+    "XPL": "plasma", "MON": "monad",
 }
 
 # Return windows, in days. 1h is handled separately from hourly candles.
