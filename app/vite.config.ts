@@ -28,7 +28,7 @@ export default defineConfig(({ mode }) => {
         // were missing and 404'd in dev, which is only survivable because
         // both panels degrade quietly.
         ...Object.fromEntries(
-          ["/klines", "/symbol-info", "/stablecoins", "/markets"].map(
+          ["/klines", "/symbol-info", "/stablecoins", "/api"].map(
             route => [route, { target: collector, changeOrigin: remote }])),
       },
     },

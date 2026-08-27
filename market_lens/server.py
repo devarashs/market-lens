@@ -1309,7 +1309,10 @@ def build_app() -> web.Application:
     app.router.add_get("/klines", klines_handler)
     app.router.add_get("/symbol-info", symbol_info_handler)
     app.router.add_get("/stablecoins", stablecoins_handler)
-    app.router.add_get("/markets", markets_handler)
+    # NOTE: the data route is /api/markets, not /markets — the latter is
+    # a client route, and an API path that shadows a page path breaks
+    # only on direct navigation, which is the easiest thing to miss.
+    app.router.add_get("/api/markets", markets_handler)
     assets_dir = WEB_DIR / "assets"
     if assets_dir.exists():  # absent until the first `npm run build`
         app.router.add_static("/assets/", assets_dir)

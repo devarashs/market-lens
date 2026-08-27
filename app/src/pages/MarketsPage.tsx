@@ -56,7 +56,7 @@ export function MarketsPage() {
 
     async function load() {
       try {
-        const response = await fetch("/markets", { signal: controller.signal });
+        const response = await fetch("/api/markets", { signal: controller.signal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const payload: MarketsResponse = await response.json();
         if (!cancelled) {

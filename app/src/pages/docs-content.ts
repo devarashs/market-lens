@@ -69,7 +69,8 @@ so its figures describe your visit rather than the market.</p>
 <p>The rebuild is possible because <code>flow_minutes</code> already
 records executed flow per minute, per venue, per price bin; the page just
 sums the price bins away. Sorting, the volume floor and the text filter all
-run client-side on the whole set, and the page polls every 5 seconds —
+run client-side on the whole set, and the page polls <code>/api/markets</code>
+every 5 seconds —
 the window moves in 5-minute steps, so pushing it over the socket would be
 precision the data does not have.</p>`,
   },
@@ -149,7 +150,10 @@ occupy the same prices. Those rows are <b>marked with a dashed rail and a
 faint wash</b>, and are left exactly where they are &mdash; the size
 resting there is real, and only the ordering is an artifact of
 aggregating. Hover one for the explanation. Away from the touch the
-marking disappears and the ladder reads normally.</li>
+marking disappears and the ladder reads normally. At coarse
+<b>grp</b> settings the whole crossing can fall inside a single bin &mdash;
+the basis is still reported, but there is nothing left to mark, because
+the ladder no longer draws a bid above an ask.</li>
 <li>Filter to a single venue whenever you care about executable price. Keep
 all nine when you care about where size sits. Filtering to one venue also
 removes the basis line and the marking, since there is no longer a second
@@ -761,9 +765,11 @@ storage live in pure, unit-tested modules (<code>aggregate.py</code>,
     title: "Limitations — read this one",
     body: `
 <p>Honest edges of the tool: <b>(1)</b> the heatmap ring resets on server
-restart (refills within the hour; disk record persists). <b>(2)</b> Binance
-depth is ~5s stale by design — occasionally the aggregate book crosses
-(negative spread) against faster feeds. <b>(3)</b> Volume profile, CVD, VWAP
+restart (refills within the hour; disk record persists). <b>(2)</b> The
+aggregate book crosses routinely — mostly the spot/perp basis, widened at
+times by Binance depth being ~5s stale by design. It is reported as
+<b>basis</b> and the overlapping ladder rows are marked; it is never
+printed as a negative spread. <b>(3)</b> Volume profile, CVD, VWAP
 and the readers accumulate <i>since server start</i>, not since midnight —
 a freshly started server has thin facts for a while. <b>(4)</b> Spot books
 (Binance/Bybit/OKX) and perp books (Hyperliquid) are mixed deliberately;
