@@ -354,3 +354,46 @@ def test_import_skips_torn_rows_not_the_migration(store, tmp_path):
 def test_import_empty_directory(store, tmp_path):
     assert store.import_csv_archive(tmp_path) == \
         {"trades": 0, "depth_snapshots": 0, "skipped_rows": 0}
+
+
+def test_market_flow_since_rolls_price_bins_up_per_market(store):
+    """The watchlist wants one number per exchange x symbol, so the price
+    bins that make flow_minutes large are summed away in SQL rather than
+    shipped to Python."""
+    store.insert_flow_minute("BTC", 300_000, {
+        "binance": {79_000.0: [5_000.0, 1_000.0], 79_010.0: [1_000.0, 500.0]},
+        "okx": {79_010.0: [500.0, 2_000.0]},
+    })
+    rows = store.market_flow_since(0, 300)
+    assert sorted(rows) == [
+        (300, "BTC", "binance", 6_000.0, 1_500.0),
+        (300, "BTC", "okx", 500.0, 2_000.0),
+    ]
+
+
+def test_market_flow_since_buckets_by_the_requested_width(store):
+    """Minutes inside one bucket collapse; the next bucket stays separate."""
+    for minute_ms in (300_000, 360_000, 540_000):      # 05:00, 06:00, 09:00
+        store.insert_flow_minute("BTC", minute_ms, {"binance": {1.0: [1.0, 0.0]}})
+    store.insert_flow_minute("BTC", 600_000, {"binance": {1.0: [10.0, 0.0]}})
+    rows = sorted(store.market_flow_since(0, 300))
+    assert rows == [(300, "BTC", "binance", 3.0, 0.0),
+                    (600, "BTC", "binance", 10.0, 0.0)]
+
+
+def test_market_flow_since_honours_the_start_bound(store):
+    store.insert_flow_minute("BTC", 300_000, {"binance": {1.0: [1.0, 0.0]}})
+    store.insert_flow_minute("BTC", 600_000, {"binance": {1.0: [2.0, 0.0]}})
+    assert store.market_flow_since(600_000, 300) == [(600, "BTC", "binance", 2.0, 0.0)]
+
+
+def test_market_flow_since_separates_symbols(store):
+    store.insert_flow_minute("BTC", 300_000, {"binance": {1.0: [1.0, 0.0]}})
+    store.insert_flow_minute("ETH", 300_000, {"binance": {1.0: [7.0, 0.0]}})
+    assert sorted(store.market_flow_since(0, 300)) == [
+        (300, "BTC", "binance", 1.0, 0.0),
+        (300, "ETH", "binance", 7.0, 0.0)]
+
+
+def test_market_flow_since_is_empty_on_a_fresh_archive(store):
+    assert store.market_flow_since(0, 300) == []

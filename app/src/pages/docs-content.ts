@@ -28,6 +28,52 @@ claims for the same reason.</p>
 <p>Not financial advice; a visualization and measurement instrument.</p>`,
   },
   {
+    id: "markets-page",
+    title: "Markets: 24h flow per venue",
+    body: `
+<p>A separate page at <code>/markets</code> (link in the header). The chart
+pages answer "what is this asset doing"; this one answers <b>"where is it
+being done, and by which side"</b> — one row per <b>market</b>, meaning
+exchange&nbsp;×&nbsp;symbol, so BTC appears once per venue rather than
+once.</p>
+<h4>The columns</h4>
+<ul>
+<li><b>price</b> — last trade seen <i>on that venue</i>. Spot and perp
+routinely disagree by a few basis points; that gap is the basis, not an
+error.</li>
+<li><b>24h</b> — the move over 24 hours. This one is per <b>symbol</b>, not
+per market: every venue quotes the same asset, so the difference between
+them is the basis rather than a different return.</li>
+<li><b>24h volume</b> — taker notional executed on that market in the
+window.</li>
+<li><b>Δ</b> — buy minus sell notional, in dollars. Net aggression, in
+size.</li>
+<li><b>Δ%</b> — the same thing as a <i>share of that market's own
+volume</i>, with a bar behind it.</li>
+</ul>
+<h4>Δ% is a ratio, and that is a trap worth knowing</h4>
+<p>Because Δ% divides by each market's own volume, <b>sorting by it ranks
+one-sidedness, not conviction</b>. A market that traded $21K almost
+entirely one way reads 91%; one that traded $183M with $22M of net buying
+behind it reads 12% — and sorts below it. The dollar Δ column is there so
+both readings are available, and the <b>min 24h volume</b> box is how you
+make a Δ% ranking mean something. It defaults to zero rather than hiding
+markets behind your back.</p>
+<h4>Where the window comes from</h4>
+<p>A fixed rolling <b>24 hours</b> in 5-minute buckets, held by the
+collector and <b>rebuilt from the archive on startup</b> — so a restart
+does not reset it, and the number does not depend on when you opened the
+page. This is the deliberate difference from the aggr.trade pane the idea
+came from: that one accumulates from zero per session or per period reset,
+so its figures describe your visit rather than the market.</p>
+<p>The rebuild is possible because <code>flow_minutes</code> already
+records executed flow per minute, per venue, per price bin; the page just
+sums the price bins away. Sorting, the volume floor and the text filter all
+run client-side on the whole set, and the page polls every 5 seconds —
+the window moves in 5-minute steps, so pushing it over the socket would be
+precision the data does not have.</p>`,
+  },
+  {
     id: "reading-mechanics",
     title: "Reading the book & tape: mechanics",
     body: `
@@ -80,24 +126,34 @@ binance-fut  80,274.4 / 80,274.5     perp
 okx-fut      80,271.4 / 80,271.5     perp
 bybit-fut    80,271.2 / 80,271.3     perp</pre>
 <p>Every individual venue is tight &mdash; spreads of $0 to $1 &mdash; and
-<b>not one of them is crossed</b>. But Kraken's <i>bid</i> at 80,333 sits
-$59 above Binance-fut's <i>ask</i> at 80,274, so the aggregate crosses by
-about 7&nbsp;basis points.</p>
+<b>not one of them is crossed</b>. But Kraken's <i>bid</i> at 80,333.4 sits
+$62 above Bybit-fut's <i>ask</i> at 80,271.3, so the aggregate crosses by
+about 7.7&nbsp;basis points.</p>
 <p>That gap is not an error and not free money: it is the <b>basis</b>, the
 standing price difference between spot and perpetual futures. Perps were
 trading ~0.07% below spot in this sample. Crossing it means two different
 instruments, two fee schedules, funding, and inventory in two places.</p>
-<p><b>Consequences for reading:</b></p>
+<p><b>How the app handles it:</b></p>
 <ul>
-<li>The spread shown between the ladder's two halves is a
-<b>cross-venue artifact</b>, not a spread. When it reads negative, you are
-looking at the basis. For a real spread, use the per-venue best bid/ask in
-the walls hover, or filter Markets down to one venue.</li>
+<li>The ladder's middle row reports the <b>tightest single-venue
+spread</b>, named with the venue that owns it &mdash; a real, executable
+number. Hover it to see every venue's spread. The aggregate's own top of
+book is never subtracted to make a spread, so <b>no negative spread is
+ever shown</b>; an earlier build did that and read "-10.0bp" on the sample
+above.</li>
+<li>When the aggregate crosses, a second line appears in gold reporting
+the overlap as <b>basis</b>, because that is what it is. It is a
+measurement, not a signal.</li>
 <li>Near the touch the two sides <b>overlap</b>: bid bins and ask bins can
-occupy the same prices. Away from the touch this disappears and the ladder
-reads normally.</li>
+occupy the same prices. Those rows are <b>marked with a dashed rail and a
+faint wash</b>, and are left exactly where they are &mdash; the size
+resting there is real, and only the ordering is an artifact of
+aggregating. Hover one for the explanation. Away from the touch the
+marking disappears and the ladder reads normally.</li>
 <li>Filter to a single venue whenever you care about executable price. Keep
-all nine when you care about where size sits.</li>
+all nine when you care about where size sits. Filtering to one venue also
+removes the basis line and the marking, since there is no longer a second
+venue to cross with.</li>
 </ul>
 <h4>Walls are not actors</h4>
 <p>Venue attribution exists for exactly this reason. A wall reading $9.2M
@@ -251,7 +307,10 @@ everything else.</p>
 <p>The side panel carries a DOM-style <b>orderbook ladder</b>: asks
 stacked above, bids below, each row showing level size, cumulative size,
 and price, with a depth bar scaled by cumulative share; the middle row is
-the last trade price (colored by aggressor) and the aggregated spread.
+the last trade price (colored by aggressor) and, on the right, the
+tightest single-venue spread &mdash; plus the cross-venue basis whenever
+the aggregate crosses. See <i>The aggregated book is a composite</i> for
+why the spread is taken from one venue and never from the aggregate.
 The <b>grp selector is the price-compression control</b> — books are
 summed per price bin (per-symbol base, e.g. $10 BTC / $0.05 SOL), and grp
 multiplies that bin from ×0.2 (exchange tick size) to ×10, re-binned
@@ -541,12 +600,21 @@ leap every indicator invites and almost none earn.</p>`,
     body: `
 <p><b>Book imbalance</b>: share of near-mid resting notional on the bid side
 (15 bins each way). <b>Tape 5m</b>: rolling five-minute aggressor totals,
-buys vs sells, all venues. <b>Spread/divergence</b>: aggregated
-best-bid/best-ask spread in basis points, plus the venue whose mid diverges
-most from the aggregate. A <i>negative</i> aggregate spread appears when a
-slower feed (Binance REST) lags a faster one — that crossed moment is
-literally the latency arbitrage window, shown honestly rather than
-hidden.</p>`,
+buys vs sells, all venues. <b>Spread / basis / divergence</b>: the
+<i>tightest single venue's</i> spread in basis points, named with that
+venue; then, only on the frames where the aggregate crosses, the overlap
+labelled <b>basis</b>; then the venue whose mid sits furthest from the
+aggregate mid, signed.</p>
+<p>The spread is taken from one venue rather than from the aggregate's own
+top of book, and deliberately so. Subtracting across the aggregate spans
+spot and perp venues trading at a basis to each other, and goes
+<i>negative</i> the moment that basis is wider than any single venue's
+spread — it read "-10.0bp" here on BTC, 2026-08-27, with every venue tight
+and not one of them crossed. A negative number is not a spread, so none is
+printed; the crossing is reported under its own name instead. Feed latency
+(Binance depth is ~5s stale by design) can widen a crossing further, but
+the standing cause is the basis, not the lag. <i>The aggregated book is a
+composite</i> has the full reading.</p>`,
   },
   {
     id: "metrics",

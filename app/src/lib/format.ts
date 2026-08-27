@@ -18,6 +18,19 @@ export function formatPrice(value: number): string {
   return value.toFixed(6);
 }
 
+/** Basis points for a dense readout, with the unit attached.
+
+    Decimals scale because the two things measured in bp here live orders
+    of magnitude apart. A single venue's spread on BTC is genuinely
+    sub-0.1bp — $0.10 wide on $80,000 is 0.012bp — so a fixed one decimal
+    would round almost every real spread to "0.0" and hide the quantity
+    being reported. The spot/perp basis runs a few bp to a few tens and
+    needs no more than one decimal. */
+export function formatBps(bps: number): string {
+  if (!Number.isFinite(bps)) return "—";
+  return `${Math.abs(bps) < 1 ? bps.toFixed(2) : bps.toFixed(1)}bp`;
+}
+
 /** "HH:MM:SS" UTC from an epoch-ms timestamp — tape row time column. */
 export function formatUtcTime(tsMs: number): string {
   return new Date(tsMs).toISOString().slice(11, 19);

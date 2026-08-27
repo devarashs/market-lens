@@ -2,7 +2,8 @@ import { exportChartPng } from "../chart/chartExport";
 import { LAYER_DEFS, MA_DEFS, POSITIONING_LABELS } from "../lib/config";
 import { FilterMenu, type FilterOption } from "./FilterMenu";
 import { availableMetrics, pickPositioningMetric } from "../lib/positioning";
-import { formatUsd } from "../lib/format";
+import { formatBps, formatUsd } from "../lib/format";
+import { crossVenueBasis, tightestVenueSpread, widestVenueDivergence } from "../lib/spread";
 import { useLensStore } from "../store/lens";
 
 /** Which positioning series the chart draws. Only rendered when the
@@ -50,21 +51,25 @@ function Gauges() {
     ? (depth.imbalance * 100).toFixed(0) : null;
   const pressure = depth.pressure ?? { buy: 0, sell: 0 };
 
-  // Spread + divergence across venues' best quotes.
-  let spread: string | null = null;
-  const bids = Object.values(depth.best ?? {}).map((b) => b.bid).filter(Boolean) as number[];
-  const asks = Object.values(depth.best ?? {}).map((b) => b.ask).filter(Boolean) as number[];
-  if (bids.length && asks.length && depth.mid) {
-    const spreadBps = ((Math.min(...asks) - Math.max(...bids)) / depth.mid) * 10_000;
-    let divVenue = "", divBps = 0;
-    for (const [venue, best] of Object.entries(depth.best)) {
-      if (!best.bid || !best.ask) continue;
-      const bps = (((best.bid + best.ask) / 2 - depth.mid) / depth.mid) * 10_000;
-      if (Math.abs(bps) > Math.abs(divBps)) { divBps = bps; divVenue = venue; }
-    }
-    spread = `spread ${spreadBps.toFixed(1)}bp · div ${divVenue} ` +
-      `${divBps >= 0 ? "+" : ""}${divBps.toFixed(1)}bp`;
-  }
+  /* Spread, basis and divergence across venues' best quotes.
+
+     The spread is the tightest SINGLE venue's, never min(ask) − max(bid)
+     across the aggregate: that subtraction spans spot and perp venues
+     trading at a basis to each other, and it goes negative whenever the
+     basis is wider than either venue's own spread. It read -10.0bp here on
+     BTC, 2026-08-27, with every individual venue tight and uncrossed. The
+     crossing is reported separately, under its real name. lib/spread.ts
+     carries the arithmetic; the ladder's mid row shows the same pair. */
+  const tightest = tightestVenueSpread(depth.best);
+  const basis = crossVenueBasis(depth.best);
+  const divergence = widestVenueDivergence(depth.best, depth.mid);
+  const readings = [
+    tightest && `spread ${formatBps(tightest.bps)} ${tightest.venue}`,
+    basis && `basis ${formatBps(basis.bps)}`,
+    divergence && `div ${divergence.venue} `
+      + `${divergence.bps >= 0 ? "+" : ""}${formatBps(divergence.bps)}`,
+  ].filter(Boolean);
+  const spread = readings.length ? readings.join(" · ") : null;
 
   return (
     <>

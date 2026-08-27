@@ -70,6 +70,7 @@ from market_lens.stablecoins import (
     LLAMA_CHART_URL, parse_supply_series, summarise as summarise_stables,
 )
 from market_lens.store import LensStore
+from market_lens import watchlist
 from market_lens.symbolinfo import COINGECKO_IDS, build as build_symbol_info
 from market_lens.venues import (
     binance_adapter,
@@ -137,6 +138,11 @@ class SymbolAccumulators:
         # permanent archive stays whales-only, but the chart wants
         # denser recent texture than whales alone provide.
         self.recent_trades: deque[dict] = deque(maxlen=800)
+        # Watchlist: rolling 24h flow per venue, in 5-minute buckets, and
+        # the last price seen on each venue. venue → bucket → [buy, sell]
+        self.market_flow: dict[str, dict[int, list[float]]] = defaultdict(
+            lambda: defaultdict(lambda: [0.0, 0.0]))
+        self.last_by_venue: dict[str, float] = {}
 
     def on_trade(self, symbol: str, trade: dict, venue: str = "") -> None:
         self.last_price = trade["price"]
@@ -150,6 +156,9 @@ class SymbolAccumulators:
         side_index = 0 if trade["side"] == "buy" else 1
         self.profile[venue][price_bin][side_index] += trade["notional"]
         self.flow_pending[minute][venue][price_bin][side_index] += trade["notional"]
+        bucket = watchlist.bucket_of(trade["ts"])
+        self.market_flow[venue][bucket][side_index] += trade["notional"]
+        self.last_by_venue[venue] = trade["price"]
         now = time.time()
         self.pressure.append((now, venue, trade["side"], trade["notional"]))
         while self.pressure and self.pressure[0][0] < now - PRESSURE_WINDOW_SECONDS:
@@ -269,6 +278,10 @@ class LensState:
         self.metrics: dict[str, dict] = {}
         # Forwarded prints awaiting their next broadcast tick.
         self.pending_trades: dict[str, list[dict]] = {key: [] for key in SYMBOLS}
+        # How long the watchlist's archive replay took, reported by the
+        # endpoint so the cost of the 24h rebuild is visible rather than
+        # guessed at.
+        self.watchlist_seed_ms: int | None = None
 
     def on_book(self, venue: str, symbol: str, book: dict) -> None:
         self.books[(symbol, venue)] = book
@@ -767,15 +780,42 @@ async def stablecoin_poll() -> None:
             await asyncio.sleep(STABLECOIN_POLL_SECONDS)
 
 
+async def markets_handler(request: web.Request) -> web.Response:
+    """Rolling 24h flow for every market — one row per exchange x symbol.
+
+    Polled rather than pushed: the window moves in 5-minute buckets, so
+    sub-second delivery would be precision the data does not have, and a
+    plain GET keeps the watchlist page independent of the symbol-scoped
+    WebSocket.
+    """
+    now_ms = int(time.time() * 1000)
+    flow = {key: accumulator.market_flow
+            for key, accumulator in STATE.accumulators.items()}
+    prices = {key: accumulator.last_by_venue
+              for key, accumulator in STATE.accumulators.items()}
+    changes = {key: (STATE.metrics.get(key) or {}).get("change24h")
+               for key in STATE.accumulators}
+    rows = watchlist.build(flow, prices, changes, now_ms)
+    return web.json_response({
+        "asOf": now_ms,
+        "windowHours": watchlist.WINDOW_SECONDS // 3600,
+        "bucketSeconds": watchlist.BUCKET_SECONDS,
+        "seedMs": STATE.watchlist_seed_ms,
+        "markets": rows,
+    })
+
+
 async def stablecoins_handler(_: web.Request) -> web.Response:
     return web.json_response(STABLECOINS)
 
 
 async def flow_archive_loop() -> None:
-    """Persist each completed minute of executed flow, per symbol."""
+    """Persist each completed minute of executed flow, per symbol, and age
+    out the watchlist's rolling window."""
     while True:
         await asyncio.sleep(20)
         current_minute = int(time.time() / 60) * 60
+        cutoff = watchlist.window_start(int(time.time() * 1000))
         for symbol, accumulator in STATE.accumulators.items():
             for minute, by_venue in accumulator.drain_completed_flow(current_minute):
                 try:
@@ -783,6 +823,39 @@ async def flow_archive_loop() -> None:
                 except Exception as error:  # noqa: BLE001 — archiving is best-effort
                     print(f"flow archive {symbol}: "
                           f"{error.__class__.__name__}: {error}", flush=True)
+            # Forget aged-out watchlist buckets HERE rather than only when
+            # the endpoint is read: a page nobody visits would otherwise
+            # accumulate 288 buckets per market per day, forever.
+            for buckets in accumulator.market_flow.values():
+                watchlist.prune(buckets, cutoff)
+
+
+def seed_watchlist() -> None:
+    """Rebuild the rolling 24h per-market window from the archive.
+
+    Without this a restart would show an empty watchlist for a day. The
+    live buckets and the archived minutes are the same numbers, so the
+    replay is exact rather than an approximation.
+    """
+    started = time.time()
+    cutoff_ms = int((time.time() - watchlist.WINDOW_SECONDS) * 1000)
+    try:
+        rows = STORE.market_flow_since(cutoff_ms, watchlist.BUCKET_SECONDS)
+    except Exception as error:  # noqa: BLE001 — an empty watchlist is survivable
+        print(f"watchlist seed failed: {error.__class__.__name__}: {error}",
+              flush=True)
+        return
+    seeded = 0
+    for bucket, symbol, venue, buy_usd, sell_usd in rows:
+        if symbol not in STATE.accumulators:
+            continue          # a symbol that has since left the registry
+        entry = STATE.accumulators[symbol].market_flow[venue][int(bucket)]
+        entry[0] += buy_usd or 0.0
+        entry[1] += sell_usd or 0.0
+        seeded += 1
+    STATE.watchlist_seed_ms = round((time.time() - started) * 1000)
+    print(f"watchlist: seeded {seeded} market-buckets in "
+          f"{STATE.watchlist_seed_ms}ms", flush=True)
 
 
 async def retention_loop() -> None:
@@ -1236,6 +1309,7 @@ def build_app() -> web.Application:
     app.router.add_get("/klines", klines_handler)
     app.router.add_get("/symbol-info", symbol_info_handler)
     app.router.add_get("/stablecoins", stablecoins_handler)
+    app.router.add_get("/markets", markets_handler)
     assets_dir = WEB_DIR / "assets"
     if assets_dir.exists():  # absent until the first `npm run build`
         app.router.add_static("/assets/", assets_dir)
@@ -1318,6 +1392,7 @@ async def main_async() -> None:
     seed_heat_rings()
     seed_liq_estimators()
     seed_flow()
+    seed_watchlist()
     print(f"archive replay complete in {time.perf_counter() - seed_started:.1f}s",
           flush=True)
 

@@ -24,7 +24,12 @@ export default defineConfig(({ mode }) => {
           target: collector.replace(/^http/, "ws"),
           ws: true, changeOrigin: remote,
         },
-        "/klines": { target: collector, changeOrigin: remote },
+        // Every JSON route the app fetches. /symbol-info and /stablecoins
+        // were missing and 404'd in dev, which is only survivable because
+        // both panels degrade quietly.
+        ...Object.fromEntries(
+          ["/klines", "/symbol-info", "/stablecoins", "/markets"].map(
+            route => [route, { target: collector, changeOrigin: remote }])),
       },
     },
     test: {

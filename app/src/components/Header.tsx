@@ -79,6 +79,8 @@ export function Header() {
         ))}
       </select>
       <SymbolInfoButton />
+      <Link className="mini-btn" to="/markets"
+            title="Cross-venue 24h flow per market">markets</Link>
       <Link className="mini-btn" to="/docs" title="Documentation">docs</Link>
       <span className={`status ${connection === "live" ? "live" : ""}`}>
         {STATUS_LABELS[connection]}

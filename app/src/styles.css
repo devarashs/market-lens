@@ -315,12 +315,49 @@ body { margin: 0; background: var(--bg); color: var(--text);
 .ladder-row .px { text-align: right; min-width: 64px; }
 .ladder-row.bid .px { color: var(--bid); }
 .ladder-row.ask .px { color: var(--ask); }
+
+/* Rows inside the overlap band — where the aggregate's two sides occupy the
+   same prices because spot and perps trade at a basis (lib/spread.ts).
+   Marked, never hidden: the size resting there is real, and only the
+   ordering is an artifact of aggregating.
+
+   Two cues, neither of them colour, because the row must keep its bid/ask
+   colour to stay readable as a side: a dashed rail in the left gutter and a
+   faint neutral wash. Text opacity is deliberately NOT touched — dimming
+   --bid to 0.62 drops it to ~3:1 against the background, under the 4.5:1
+   floor, and softness is never bought out of text contrast. */
+.ladder-row.crossed {
+  background: color-mix(in srgb, var(--muted) 8%, transparent);
+  cursor: help;
+}
+.ladder-row.crossed::before {
+  content: ""; position: absolute; left: 1px; top: 1px; bottom: 1px; width: 2px;
+  z-index: 1; pointer-events: none; border-radius: 1px;
+  background: repeating-linear-gradient(
+    180deg, var(--muted) 0 2px, transparent 2px 4px);
+}
+
 .ladder-mid {
   display: flex; align-items: baseline; justify-content: space-between;
   padding: 5px 6px; margin: 2px 0;
   border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
 }
 .ladder-mid b { font-size: 16px; }
+/* Right of the mid row: the executable single-venue spread, and beneath it
+   the cross-venue basis on the frames where the aggregate crosses. Stacked
+   rather than inline because the second line is intermittent — inline, its
+   arrival would shove the first one sideways every time the basis widened
+   past a venue spread. */
+.ladder-spread {
+  display: flex; flex-direction: column; align-items: flex-end;
+  gap: 1px; line-height: 1.35; text-align: right; color: var(--muted);
+  cursor: help;
+}
+/* Gold is the theme's "look at this" accent (it marks a closing candle
+   too). The word "basis" carries the meaning; the colour only draws the
+   eye, so nothing is conveyed by colour alone. */
+.ladder-spread .basis { color: var(--color-gold); }
+
 .ladder select { margin-left: 6px; }
 #tape-list {
   list-style: none; margin: 0; padding: 0; font-size: 12px;
@@ -407,6 +444,68 @@ body { margin: 0; background: var(--bg); color: var(--text);
 @media (prefers-reduced-motion: reduce) {
   .liq-row { animation: none; }
 }
+/* ------------------------------------------------------------ watchlist */
+.markets-page {
+  height: 100%; overflow-y: auto; padding: 18px 22px 40px;
+  max-width: 1100px; margin: 0 auto;
+}
+.markets-head h1 { font-size: 18px; margin: 0 0 6px; font-weight: 600; }
+.markets-back { color: var(--text); text-decoration: none; }
+.markets-back:hover { color: var(--accent); }
+.markets-sub { font-size: 12px; margin: 0 0 14px; max-width: 70ch; line-height: 1.6; }
+.markets-controls {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  margin-bottom: 10px;
+}
+.markets-search {
+  flex: 1 1 220px; min-width: 160px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
+  color: var(--text); padding: 6px 10px; font-size: 12px; outline: none;
+}
+.markets-search:focus { border-color: var(--accent); }
+.markets-field { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.markets-field input, .markets-field select {
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
+  color: var(--text); padding: 5px 8px; font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.markets-field input { width: 8.5rem; }
+.markets-totals {
+  display: flex; flex-wrap: wrap; gap: 14px; font-size: 11px;
+  padding: 7px 2px 10px; border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+.markets-table {
+  width: 100%; border-collapse: collapse; font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.markets-table th {
+  text-align: left; font-weight: 400; color: var(--muted);
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em;
+  padding: 8px 8px 6px; border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; background: var(--bg);
+}
+.markets-table th.num, .markets-table td.num { text-align: right; }
+.markets-table td {
+  padding: 5px 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+}
+.markets-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.markets-symbol { color: var(--text); text-decoration: none; }
+.markets-symbol:hover b { color: var(--accent); }
+/* Δ% doubles as a bar so one-sidedness reads without comparing numbers. */
+.delta-cell { position: relative; min-width: 4.5rem; }
+.delta-cell i {
+  position: absolute; right: 0; top: 2px; bottom: 2px; z-index: 0;
+  pointer-events: none; border-radius: 2px;
+}
+.delta-cell i.buy { background: color-mix(in srgb, var(--bid) 30%, transparent); }
+.delta-cell i.sell { background: color-mix(in srgb, var(--ask) 30%, transparent); }
+.delta-cell span { position: relative; z-index: 1; }
+@media (max-width: 700px) {
+  .markets-page { padding: 14px 12px 30px; }
+  .markets-table th:nth-child(5), .markets-table td:nth-child(5) { display: none; }
+}
+
 .muted { color: var(--muted); }
 .attribution {
   padding: 6px 18px; border-top: 1px solid var(--border); font-size: 11px;

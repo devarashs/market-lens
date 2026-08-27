@@ -96,6 +96,9 @@ CREATE TABLE IF NOT EXISTS flow_minutes (
     sell_usd  REAL    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_flow_symbol_ts ON flow_minutes (symbol, ts);
+-- The watchlist asks for every symbol in a time range, so it cannot use
+-- the symbol-leading index above and would scan 90 days to read one.
+CREATE INDEX IF NOT EXISTS idx_flow_ts ON flow_minutes (ts);
 
 -- Net long/short positioning per source (see market_lens/positioning.py).
 -- Binance serves only ~30 days of its long/short history and Bitfinex a
@@ -327,6 +330,22 @@ class LensStore:
             params.extend(venues)
         sql += " GROUP BY 1 ORDER BY 1"
         return self.connection.execute(sql, params).fetchall()
+
+    def market_flow_since(self, start_ms: int, bucket_seconds: int) -> list[tuple]:
+        """(bucket_start_seconds, symbol, venue, buy_usd, sell_usd) for the
+        watchlist's rolling window, summed over price bins in SQL.
+
+        This is what makes the window survive a restart: the collector holds
+        the live buckets in memory, but they are only ever a replay of what
+        `flow_minutes` already recorded, so a reboot rebuilds the same 24h
+        rather than starting from zero.
+        """
+        return self.connection.execute(
+            "SELECT ts / 1000 / ? * ? AS bucket, symbol, venue,"
+            " SUM(buy_usd), SUM(sell_usd) FROM flow_minutes"
+            " WHERE ts >= ? GROUP BY bucket, symbol, venue",
+            (bucket_seconds, bucket_seconds, start_ms),
+        ).fetchall()
 
     def positioning_series(self, symbol: str, start_ms: int) -> dict[str, list]:
         """{metric: [[ts_seconds, net_pct], …]} for the chart, oldest first."""
