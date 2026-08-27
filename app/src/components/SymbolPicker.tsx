@@ -5,6 +5,7 @@ import {
   ASSET_CLASSES, ASSET_CLASS_LABELS, SYMBOL_META, SYMBOL_NAMES,
   type AssetClass, type Symbol,
 } from "../lib/config";
+import { formatPrice } from "../lib/format";
 import { useLensStore } from "../store/lens";
 
 /** Rank a symbol against a query: exact ticker beats prefix beats a hit
@@ -115,7 +116,7 @@ export function SymbolPicker() {
               title="Change symbol (press / to search)">
         <b>{symbol}</b>
         {change !== undefined && (
-          <small className={change >= 0 ? "buy-c" : "sell-c"}>
+          <small className={change >= 0 ? "buy-c" : "sell-c"} title="24h change">
             {change >= 0 ? "+" : ""}{change.toFixed(1)}%
           </small>
         )}
@@ -132,12 +133,19 @@ export function SymbolPicker() {
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={onKeyDown}
           />
+          <div className="symbol-legend muted" aria-hidden="true">
+            <span />
+            <span />
+            <span className="px">price</span>
+            <span className="chg">24h</span>
+          </div>
           <div className="symbol-list">
             {rows.length === 0 && <p className="muted small empty">No match.</p>}
             {rows.map((row, index) => {
               const header = row.cls !== lastClass ? row.cls : null;
               lastClass = row.cls;
               const rowChange = metrics[row.key]?.change24h;
+              const rowLast = metrics[row.key]?.last;
               return (
                 <div key={row.key}>
                   {header && (
@@ -156,11 +164,14 @@ export function SymbolPicker() {
                   >
                     <b>{row.key}</b>
                     <span className="muted name">{row.name ?? ""}</span>
-                    {rowChange !== undefined && (
-                      <span className={rowChange >= 0 ? "buy-c" : "sell-c"}>
-                        {rowChange >= 0 ? "+" : ""}{rowChange.toFixed(1)}%
-                      </span>
-                    )}
+                    <span className="px">
+                      {rowLast !== undefined ? formatPrice(rowLast) : ""}
+                    </span>
+                    <span className={"chg " + (rowChange === undefined ? ""
+                      : rowChange >= 0 ? "buy-c" : "sell-c")}>
+                      {rowChange === undefined ? ""
+                        : `${rowChange >= 0 ? "+" : ""}${rowChange.toFixed(1)}%`}
+                    </span>
                   </Link>
                 </div>
               );

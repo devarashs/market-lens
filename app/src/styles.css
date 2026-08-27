@@ -208,7 +208,8 @@ body { margin: 0; background: var(--bg); color: var(--text);
 .symbol-current .caret { color: var(--muted); font-size: 10px; }
 .symbol-menu {
   position: absolute; top: calc(100% + 6px); left: 0; z-index: 50;
-  width: 300px; max-height: 60vh; display: flex; flex-direction: column;
+  /* Widened from 300px for the price column. */
+  width: 352px; max-height: 60vh; display: flex; flex-direction: column;
   border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
   box-shadow: 0 12px 32px rgb(0 0 0 / 45%); overflow: hidden;
 }
@@ -222,12 +223,25 @@ body { margin: 0; background: var(--bg); color: var(--text);
   padding: 6px 11px 3px; font-size: 9px; text-transform: uppercase;
   letter-spacing: 0.08em;
 }
+/* One grid shared by the rows and the legend above them, so the column
+   headings sit over the columns they name. */
+.symbol-option, .symbol-legend {
+  display: grid; grid-template-columns: 4.2rem 1fr 5.2rem 3.4rem;
+  align-items: baseline; gap: 8px; padding: 5px 11px;
+  font-variant-numeric: tabular-nums;
+}
 .symbol-option {
-  display: grid; grid-template-columns: 4.5rem 1fr auto; align-items: baseline;
-  gap: 8px; padding: 5px 11px; color: var(--text); text-decoration: none;
-  font-size: 12px; font-variant-numeric: tabular-nums;
+  color: var(--text); text-decoration: none; font-size: 12px;
+}
+.symbol-legend {
+  padding: 5px 11px 6px; font-size: 9px;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  border-bottom: 1px solid var(--border);
 }
 .symbol-option .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.symbol-option .px { text-align: right; opacity: 0.85; }
+.symbol-legend .px, .symbol-legend .chg { text-align: right; }
+.symbol-option .chg { text-align: right; }
 .symbol-option.active { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .symbol-option.current b { color: var(--accent); }
 

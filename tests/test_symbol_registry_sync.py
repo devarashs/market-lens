@@ -79,3 +79,18 @@ def test_the_docs_symbol_count_is_not_stale():
     match = DOCS_COUNT.search(DOCS_TS.read_text(encoding="utf-8"))
     assert match is not None, "the symbol-count sentence moved or was reworded"
     assert int(match[1]) == len(SYMBOLS)
+
+
+NAMES_BLOCK = re.compile(r"SYMBOL_NAMES[^{]*\{(.*?)\n\};", re.S)
+NAME_ENTRY = re.compile(r'(\w+):\s*"')
+
+
+def test_every_symbol_has_a_display_name():
+    """The picker advertises search by ticker OR name, and shows the name
+    in its own column. A symbol without one is unsearchable by name and
+    renders a blank cell — which is how MON, AAVE, PUMP and FARTCOIN were
+    found (2026-08-27)."""
+    block = NAMES_BLOCK.search(CONFIG_TS.read_text(encoding="utf-8"))
+    assert block is not None, "SYMBOL_NAMES moved or was reformatted"
+    named = set(NAME_ENTRY.findall(block[1]))
+    assert [key for key in SYMBOLS if key not in named] == []
