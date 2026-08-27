@@ -659,6 +659,96 @@ async def coinbase_adapter(on_book, on_trade) -> None:
             await asyncio.sleep(RECONNECT_SECONDS)
 
 
+BITGET_WS = "wss://ws.bitget.com/v2/ws/public"
+
+
+async def bitget_adapter(on_book, on_trade) -> None:
+    """Bitget spot: v2 public `books` (500-level snapshot + deltas) + `trade`.
+
+    Added 2026-08-28 as the first venue beyond the original nine. aggr.trade
+    carries ~28 exchanges to our nine, and the gap is not cosmetic — measured
+    on BTC, the venues we were missing turn over roughly $3.1B/24h between
+    them, none of it reaching our book, our tape, or the archive.
+
+    Bitget first because its v2 feed is shaped almost exactly like OKX's
+    (`arg`/`action`/`data`, snapshot-then-delta), so it is the cheapest
+    correct addition and therefore the honest way to prove the path and
+    measure what one venue costs before committing to four.
+
+    Not folded into `_okx_engine` despite the resemblance: Bitget names the
+    trade fields `price`/`size` where OKX uses `px`/`sz`, subscribes with an
+    `instType`, and needs a literal "ping" string. Parameterising all of
+    that would leave one function serving two protocols badly.
+
+    `side` is the AGGRESSOR here, unlike Coinbase's maker-side convention.
+    Verified against the live feed before writing (snapshot 500 levels per
+    side, spanning ±0.44% of price on BTC).
+    """
+    inst_to_key = {spec.bitget: spec.key
+                   for spec in SYMBOLS.values() if spec.bitget}
+    if not inst_to_key:
+        return
+    args = ([{"instType": "SPOT", "channel": "books", "instId": inst}
+             for inst in inst_to_key]
+            + [{"instType": "SPOT", "channel": "trade", "instId": inst}
+               for inst in inst_to_key])
+    books: dict[str, DeltaBook] = {inst: DeltaBook() for inst in inst_to_key}
+
+    while True:
+        try:
+            async with websockets.connect(BITGET_WS, ping_interval=None,
+                                          max_size=2**22) as ws:
+                await ws.send(fastjson.dumps_str({"op": "subscribe", "args": args}))
+                _log("bitget: connected + subscribed")
+
+                async def keepalive() -> None:
+                    # Bitget closes an idle socket at 30s and wants a bare
+                    # "ping" string rather than a protocol frame.
+                    while True:
+                        await asyncio.sleep(25)
+                        await ws.send("ping")
+
+                ping_task = asyncio.create_task(keepalive())
+                try:
+                    async for raw in ws:
+                        if raw == "pong":
+                            continue
+                        message = fastjson.loads(raw)
+                        data = message.get("data")
+                        if not data:
+                            continue          # subscribe acks carry no data
+                        channel = message.get("arg", {}).get("channel")
+                        key = inst_to_key.get(message.get("arg", {}).get("instId"))
+                        if key is None:
+                            continue
+                        if channel == "books":
+                            entry = data[0]
+                            book = books[message["arg"]["instId"]]
+                            if message.get("action") == "snapshot":
+                                book.snapshot(entry.get("bids", []), entry.get("asks", []))
+                            else:
+                                book.delta(entry.get("bids", []), entry.get("asks", []))
+                            payload = book.maybe_emit()
+                            if payload is not None:
+                                on_book("bitget", key, payload)
+                        elif channel == "trade":
+                            for trade in data:
+                                price = float(trade["price"])
+                                size = float(trade["size"])
+                                on_trade("bitget", key, {
+                                    "price": price, "size": size,
+                                    # Aggressor side, unlike Coinbase's maker side.
+                                    "side": "buy" if trade.get("side") == "buy" else "sell",
+                                    "notional": price * size,
+                                    "ts": int(trade.get("ts", time.time() * 1000)),
+                                })
+                finally:
+                    ping_task.cancel()
+        except Exception as error:  # noqa: BLE001 — isolation contract
+            _log(f"bitget: {error.__class__.__name__}: {error} — reconnecting in {RECONNECT_SECONDS}s")
+            await asyncio.sleep(RECONNECT_SECONDS)
+
+
 async def kraken_adapter(on_book, on_trade) -> None:
     """Kraken WS v2: book (500 levels, snapshot+update) + trade. USD-quoted."""
     symbol_to_key = {spec.kraken: spec.key

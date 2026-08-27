@@ -37,6 +37,7 @@ class SymbolSpec:
     big_trade_usd: float     # tape/marker threshold (notional USD)
     bybit: str | None = None     # Bybit spot symbol
     okx: str | None = None       # OKX spot instId
+    bitget: str | None = None    # Bitget spot instId
     # USD-quoted venues (no USDT books worth using): joins the aggregate
     # with the ~2bp USDT-peg smear every cross-venue aggregator accepts.
     coinbase: str | None = None  # Coinbase product_id
@@ -65,19 +66,19 @@ SYMBOLS: dict[str, SymbolSpec] = {
     spec.key: spec
     for spec in (
         SymbolSpec("BTC", "btcusdt", "BTC", price_bin=10.0, big_trade_usd=100_000,
-                   bybit="BTCUSDT", okx="BTC-USDT",
+                   bybit="BTCUSDT", okx="BTC-USDT", bitget="BTCUSDT",
                    coinbase="BTC-USD", kraken="BTC/USD", core=True),
         SymbolSpec("ETH", "ethusdt", "ETH", price_bin=1.0, big_trade_usd=50_000,
-                   bybit="ETHUSDT", okx="ETH-USDT",
+                   bybit="ETHUSDT", okx="ETH-USDT", bitget="ETHUSDT",
                    coinbase="ETH-USD", kraken="ETH/USD", core=True),
         SymbolSpec("SOL", "solusdt", "SOL", price_bin=0.05, big_trade_usd=25_000,
-                   bybit="SOLUSDT", okx="SOL-USDT",
+                   bybit="SOLUSDT", okx="SOL-USDT", bitget="SOLUSDT",
                    coinbase="SOL-USD", kraken="SOL/USD", core=True),
         # BNB trades on neither Coinbase nor Kraken (Binance's own token).
         SymbolSpec("BNB", "bnbusdt", "BNB", price_bin=0.2, big_trade_usd=25_000,
-                   bybit="BNBUSDT", okx="BNB-USDT", core=True),
+                   bybit="BNBUSDT", okx="BNB-USDT", bitget="BNBUSDT", core=True),
         SymbolSpec("DOGE", "dogeusdt", "DOGE", price_bin=0.0005, big_trade_usd=25_000,
-                   bybit="DOGEUSDT", okx="DOGE-USDT",
+                   bybit="DOGEUSDT", okx="DOGE-USDT", bitget="DOGEUSDT",
                    coinbase="DOGE-USD", kraken="DOGE/USD", core=True),
         SymbolSpec("HYPE", None, "HYPE", price_bin=0.01, big_trade_usd=10_000, core=True),
 
