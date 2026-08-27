@@ -57,3 +57,16 @@ def test_memory_is_absent_rather_than_wrong_when_unreadable():
     """None beats a guess: a wrong RSS is worse than no RSS."""
     value = health.rss_mb()
     assert value is None or value > 0
+
+
+def test_the_snapshot_names_the_running_revision():
+    """Two deploys tonight were called live when they were not, and the
+    only tell was a measurement disagreeing with a behavioural probe.
+    Uptime was the giveaway both times, which is an inference; this makes
+    it a fact a probe can compare against."""
+    assert "revision" in base()
+
+
+def test_revision_is_a_short_sha_or_honestly_absent():
+    value = health.deployed_revision()
+    assert value is None or (4 <= len(value) <= 12 and value.isalnum())

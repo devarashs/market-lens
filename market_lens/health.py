@@ -26,12 +26,37 @@ Pure functions; the caller supplies the clock and the counters.
 from __future__ import annotations
 
 import os
+import subprocess
 import time
 
 try:                                    # Unix only; absent on Windows dev boxes.
     import resource
 except ImportError:                     # pragma: no cover - not the deploy target
     resource = None
+
+
+def deployed_revision() -> str | None:
+    """Short commit SHA of the running checkout, or None outside a repo.
+
+    Added 2026-08-28 after two false "it deployed" calls in one session:
+    both times a behavioural probe passed against the OLD code and the
+    only tell was a measurement disagreeing with it. Uptime was the giveaway
+    each time, which is an inference. This makes it a fact.
+
+    Read once at import: the checkout cannot change under a running
+    process, and shelling out per request would be absurd.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            capture_output=True, text=True, timeout=5, check=True)
+        return result.stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+REVISION = deployed_revision()
 
 
 def cpu_seconds() -> float:
@@ -98,6 +123,7 @@ def snapshot(started_at: float, now: float, *, clients: int, books: int,
         "cpuPercent": cpu_percent(used, uptime),
         "rssMb": rss_mb(),
         "pid": os.getpid(),
+        "revision": REVISION,
         "clients": clients,
         "booksTracked": books,
         "symbols": symbols,
