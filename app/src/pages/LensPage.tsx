@@ -125,8 +125,8 @@ export function LensPage() {
            target="_blank" rel="noopener noreferrer">
           TradingView Lightweight Charts
         </a>{" "}
-        (Apache-2.0). Data: Binance, Bybit, OKX, Coinbase, Kraken, Bitget
-        &amp; Hyperliquid public streams. Depth/heatmap = resting <em>claims</em>; profile/CVD/tape =
+        (Apache-2.0). Data: Binance, Bybit, OKX, Coinbase, Kraken, Bitget,
+        Deribit &amp; Hyperliquid public streams. Depth/heatmap = resting <em>claims</em>; profile/CVD/tape =
         executed <em>facts</em>. Not financial advice.
       </footer>
     </>

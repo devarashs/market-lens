@@ -74,3 +74,32 @@ def test_the_real_multipliers_match_what_broke():
     assert values["ETH-USDT-SWAP"] == 0.1
     assert values["SOL-USDT-SWAP"] == 1.0
     assert values["DOGE-USDT-SWAP"] == 1000.0
+
+
+# ------------------------------------------------------- deribit unit safety
+
+from market_lens.venues import deribit_levels
+
+
+def test_deribit_levels_convert_usd_notional_to_base_size():
+    """Deribit's inverse perps quote `amount` in USD, every other venue
+    here quotes base units. Mixing the two silently corrupts the aggregate
+    book — the same shape as the OKX contract bug."""
+    rows = [["new", 80_000.0, 8_000.0], ["change", 79_000.0, 790.0]]
+    assert deribit_levels(rows) == [[80_000.0, 0.1], [79_000.0, 0.01]]
+
+
+def test_deribit_delete_rows_become_zero_size():
+    """A delete carries amount 0, which DeltaBook already treats as a
+    removal — so the action field needs no special case."""
+    assert deribit_levels([["delete", 80_000.0, 0.0]]) == [[80_000.0, 0.0]]
+
+
+def test_deribit_levels_survive_a_zero_price():
+    """Never divide by zero on a malformed row; a zero-size level is
+    dropped by DeltaBook, which is the right outcome."""
+    assert deribit_levels([["new", 0.0, 500.0]]) == [[0.0, 0.0]]
+
+
+def test_deribit_levels_handle_an_empty_side():
+    assert deribit_levels([]) == []

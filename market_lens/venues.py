@@ -749,6 +749,106 @@ async def bitget_adapter(on_book, on_trade) -> None:
             await asyncio.sleep(RECONNECT_SECONDS)
 
 
+DERIBIT_WS = "wss://www.deribit.com/ws/api/v2"
+
+
+def deribit_levels(rows: list) -> list[list[float]]:
+    """Deribit book rows -> [[price, base_size], ...].
+
+    Two conversions in one place because getting either wrong is the exact
+    shape of the OKX contract bug that put 63,607 phantom whale trades in
+    the archive (2026-08-27):
+
+      * rows arrive as [action, price, amount] where action is
+        new/change/delete; a delete carries amount 0, which DeltaBook
+        already treats as a removal, so the action needs no special case.
+      * `amount` on the inverse perps is USD NOTIONAL, not coin. Verified
+        against the venue before writing: every amount divides by
+        contract_size 10, min_trade_amount is 10 (a $10 minimum is
+        sensible, a 10-BTC one is not), and reading them as base units
+        produces single prints of $5.19 BILLION.
+
+    So base size is amount / price. Every other venue here quotes base
+    units, and mixing the two would silently corrupt the aggregate book.
+    """
+    out = []
+    for row in rows:
+        _, price, amount = row
+        price = float(price)
+        out.append([price, float(amount) / price if price else 0.0])
+    return out
+
+
+async def deribit_adapter(on_book, on_trade) -> None:
+    """Deribit inverse perpetuals: incremental `book` + `trades`.
+
+    The largest venue we were missing at $669M/24h on BTC. Restricted to
+    the USD-quoted INVERSE perps (BTC-PERPETUAL, ETH-PERPETUAL) on
+    purpose: Deribit's USDC-quoted linear perps report `amount` in base
+    units instead, and carrying two unit conventions in one adapter is how
+    the OKX bug happened. SOL is reachable there and is deliberately left
+    until that difference is handled explicitly.
+
+    `direction` is the aggressor side.
+    """
+    inst_to_key = {spec.deribit: spec.key
+                   for spec in SYMBOLS.values() if spec.deribit}
+    if not inst_to_key:
+        return
+    channels = ([f"book.{inst}.100ms" for inst in inst_to_key]
+                + [f"trades.{inst}.100ms" for inst in inst_to_key])
+    books: dict[str, DeltaBook] = {inst: DeltaBook() for inst in inst_to_key}
+
+    while True:
+        try:
+            async with websockets.connect(DERIBIT_WS, ping_interval=20,
+                                          max_size=2**22) as ws:
+                await ws.send(fastjson.dumps_str({
+                    "jsonrpc": "2.0", "id": 1, "method": "public/subscribe",
+                    "params": {"channels": channels}}))
+                _log("deribit: connected + subscribed")
+                async for raw in ws:
+                    message = fastjson.loads(raw)
+                    params = message.get("params")
+                    if not params:
+                        continue          # the subscribe result
+                    channel = params.get("channel", "")
+                    data = params.get("data")
+                    if not data:
+                        continue
+                    inst = channel.split(".")[1] if "." in channel else None
+                    key = inst_to_key.get(inst)
+                    if key is None:
+                        continue
+                    if channel.startswith("book."):
+                        book = books[inst]
+                        bids = deribit_levels(data.get("bids", []))
+                        asks = deribit_levels(data.get("asks", []))
+                        # No prev_change_id means this is the initial
+                        # snapshot for the channel.
+                        if data.get("prev_change_id") is None:
+                            book.snapshot(bids, asks)
+                        else:
+                            book.delta(bids, asks)
+                        payload = book.maybe_emit()
+                        if payload is not None:
+                            on_book("deribit", key, payload)
+                    elif channel.startswith("trades."):
+                        for trade in data:
+                            price = float(trade["price"])
+                            notional = float(trade["amount"])   # already USD
+                            on_trade("deribit", key, {
+                                "price": price,
+                                "size": notional / price if price else 0.0,
+                                "side": "buy" if trade.get("direction") == "buy" else "sell",
+                                "notional": notional,
+                                "ts": int(trade.get("timestamp", time.time() * 1000)),
+                            })
+        except Exception as error:  # noqa: BLE001 — isolation contract
+            _log(f"deribit: {error.__class__.__name__}: {error} — reconnecting in {RECONNECT_SECONDS}s")
+            await asyncio.sleep(RECONNECT_SECONDS)
+
+
 async def kraken_adapter(on_book, on_trade) -> None:
     """Kraken WS v2: book (500 levels, snapshot+update) + trade. USD-quoted."""
     symbol_to_key = {spec.kraken: spec.key

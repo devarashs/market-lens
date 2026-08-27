@@ -38,6 +38,9 @@ class SymbolSpec:
     bybit: str | None = None     # Bybit spot symbol
     okx: str | None = None       # OKX spot instId
     bitget: str | None = None    # Bitget spot instId
+    # Deribit INVERSE perp only (USD-quoted). Its USDC linear perps
+    # report size in base units instead, so they are not interchangeable.
+    deribit: str | None = None   # e.g. BTC-PERPETUAL
     # USD-quoted venues (no USDT books worth using): joins the aggregate
     # with the ~2bp USDT-peg smear every cross-venue aggregator accepts.
     coinbase: str | None = None  # Coinbase product_id
@@ -66,10 +69,10 @@ SYMBOLS: dict[str, SymbolSpec] = {
     spec.key: spec
     for spec in (
         SymbolSpec("BTC", "btcusdt", "BTC", price_bin=10.0, big_trade_usd=100_000,
-                   bybit="BTCUSDT", okx="BTC-USDT", bitget="BTCUSDT",
+                   bybit="BTCUSDT", okx="BTC-USDT", bitget="BTCUSDT", deribit="BTC-PERPETUAL",
                    coinbase="BTC-USD", kraken="BTC/USD", core=True),
         SymbolSpec("ETH", "ethusdt", "ETH", price_bin=1.0, big_trade_usd=50_000,
-                   bybit="ETHUSDT", okx="ETH-USDT", bitget="ETHUSDT",
+                   bybit="ETHUSDT", okx="ETH-USDT", bitget="ETHUSDT", deribit="ETH-PERPETUAL",
                    coinbase="ETH-USD", kraken="ETH/USD", core=True),
         SymbolSpec("SOL", "solusdt", "SOL", price_bin=0.05, big_trade_usd=25_000,
                    bybit="SOLUSDT", okx="SOL-USDT", bitget="SOLUSDT",
