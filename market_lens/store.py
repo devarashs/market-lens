@@ -347,6 +347,26 @@ class LensStore:
             (bucket_seconds, bucket_seconds, start_ms),
         ).fetchall()
 
+    def volume_by_utc_hour(self, start_ms: int,
+                           symbol: str | None = None) -> dict[int, float]:
+        """{utc_hour: traded_notional} over everything recorded since
+        `start_ms`, for the session clock.
+
+        Grouped in SQL by hour-of-day so the whole window collapses to at
+        most 24 rows before it reaches Python — the same reasoning as
+        market_flow_since, and the reason this can run on a long window
+        without shipping millions of price bins.
+        """
+        sql = ("SELECT CAST(strftime('%H', ts / 1000, 'unixepoch') AS INTEGER),"
+               " SUM(buy_usd + sell_usd) FROM flow_minutes WHERE ts >= ?")
+        params: list = [start_ms]
+        if symbol is not None:
+            sql += " AND symbol = ?"
+            params.append(symbol)
+        sql += " GROUP BY 1"
+        return {int(hour): float(volume or 0.0)
+                for hour, volume in self.connection.execute(sql, params)}
+
     def positioning_series(self, symbol: str, start_ms: int) -> dict[str, list]:
         """{metric: [[ts_seconds, net_pct], …]} for the chart, oldest first."""
         rows = self.connection.execute(

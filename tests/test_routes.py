@@ -70,3 +70,10 @@ def test_health_is_under_api_too():
     """Same rule as the watchlist: a data route must not be able to shadow
     a page the SPA might add later."""
     assert "/api/health" in server_routes()
+
+
+def test_sessions_data_is_under_api_so_the_page_can_own_its_path():
+    """/sessions is a client route; the data must not shadow it."""
+    routes = server_routes()
+    assert "/api/sessions" in routes
+    assert "/sessions" not in routes

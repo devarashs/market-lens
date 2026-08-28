@@ -397,3 +397,31 @@ def test_market_flow_since_separates_symbols(store):
 
 def test_market_flow_since_is_empty_on_a_fresh_archive(store):
     assert store.market_flow_since(0, 300) == []
+
+
+def test_volume_by_utc_hour_buckets_by_hour_of_day(store):
+    """The session clock needs 24 numbers, not millions of price bins, so
+    the grouping happens in SQL."""
+    # 1970-01-01 03:00 and 03:30 UTC -> hour 3; 15:00 -> hour 15.
+    store.insert_flow_minute("BTC", 3 * 3_600_000, {"binance": {1.0: [100.0, 50.0]}})
+    store.insert_flow_minute("BTC", 3 * 3_600_000 + 1_800_000,
+                             {"binance": {1.0: [10.0, 5.0]}})
+    store.insert_flow_minute("BTC", 15 * 3_600_000, {"binance": {1.0: [7.0, 3.0]}})
+    assert store.volume_by_utc_hour(0) == {3: 165.0, 15: 10.0}
+
+
+def test_volume_by_utc_hour_can_narrow_to_one_symbol(store):
+    store.insert_flow_minute("BTC", 3_600_000, {"binance": {1.0: [100.0, 0.0]}})
+    store.insert_flow_minute("ETH", 3_600_000, {"binance": {1.0: [7.0, 0.0]}})
+    assert store.volume_by_utc_hour(0) == {1: 107.0}
+    assert store.volume_by_utc_hour(0, "ETH") == {1: 7.0}
+
+
+def test_volume_by_utc_hour_honours_the_start_bound(store):
+    store.insert_flow_minute("BTC", 3_600_000, {"binance": {1.0: [5.0, 0.0]}})
+    store.insert_flow_minute("BTC", 7_200_000, {"binance": {1.0: [9.0, 0.0]}})
+    assert store.volume_by_utc_hour(7_200_000) == {2: 9.0}
+
+
+def test_volume_by_utc_hour_is_empty_on_a_fresh_archive(store):
+    assert store.volume_by_utc_hour(0) == {}
