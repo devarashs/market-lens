@@ -40,6 +40,12 @@ import { computeHunter, valueAreaFromProfile, type HunterFrame } from "../lib/hu
    nominal type stands in for all of them. The casts live only here. */
 type PriceSeries = ISeriesApi<"Candlestick">;
 
+/** Bars to hold before the chart stops fetching older history on its own.
+    Three pages: ~50 hours on a 1m chart, ~10 days on 5m, ~4 months on 1h.
+    Deep enough that zooming out shows something, shallow enough that a
+    symbol switch is not twelve requests. */
+const HISTORY_TARGET_BARS = 3000;
+
 const REDRAW_EVERY_MS = 300; // time drift floor: bars advance even when idle
 
 function makePriceSeries(chart: IChartApi, style: ChartStyle): PriceSeries {
@@ -362,6 +368,7 @@ export function LensChart() {
     let historyExhausted = false;
     async function loadOlderCandles(): Promise<void> {
       if (loadingOlder || historyExhausted) return;
+      const before = store.getState().candleRows.length;
       const { candleRows, symbol, timeframe } = store.getState();
       const oldest = candleRows[0];
       if (!oldest) return;
@@ -380,7 +387,30 @@ export function LensChart() {
         state.setCandleRows(mergeCandles(rows, state.candleRows));
       } catch { /* transient; the next pan retries */ }
       finally { loadingOlder = false; }
+
+      // Keep pulling until there is enough history to be worth zooming
+      // out into. One page is 1000 bars, which on a 1m chart is under 17
+      // hours — so a fresh tab could only ever show "about a day", and
+      // the rest arrived solely if you panned to within 30 bars of the
+      // start. Every reload threw away whatever had accumulated, which is
+      // exactly what a run of deploys looked like from outside
+      // (Arash, 2026-08-28: "I only have the last day of candles now").
+      //
+      // Chained rather than parallel: each page needs the previous page's
+      // oldest bar as its endTime, and firing them together would just
+      // request the same window repeatedly.
+      const after = store.getState().candleRows.length;
+      if (after > before && after < HISTORY_TARGET_BARS) {
+        void loadOlderCandles();
+      }
     }
+
+    // Fill toward the target as soon as the first page lands, so zooming
+    // out is useful immediately instead of stopping at the initial window.
+    const stopPrefetch = store.subscribe(
+      (s) => s.candleRows.length,
+      (count) => { if (count > 0 && count < HISTORY_TARGET_BARS) void loadOlderCandles(); },
+    );
 
     chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
       markDirty(); // pan/zoom repaints overlays
@@ -437,6 +467,7 @@ export function LensChart() {
 
     // ------------------------------------------- transient subscriptions
     const unsubscribers = [
+      stopPrefetch,
       store.subscribe((s) => s.candleRows, () => { applyPriceData(); markDirty(); }),
       store.subscribe((s) => s.chartStyle, rebuildPriceSeries),
       store.subscribe((s) => s.cvd, applyCvd),
