@@ -66,6 +66,8 @@ export function Header() {
         ))}
       </select>
       <SymbolInfoButton />
+      <Link className="mini-btn" to="/sessions"
+            title="Trading-hub session clock and volume shares">sessions</Link>
       <Link className="mini-btn" to="/markets"
             title="Cross-venue 24h flow per market">markets</Link>
       <Link className="mini-btn" to="/docs" title="Documentation">docs</Link>

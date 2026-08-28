@@ -5,6 +5,7 @@ import { startConnection } from "./lib/connection";
 import { DocsPage } from "./pages/DocsPage";
 import { LensPage } from "./pages/LensPage";
 import { MarketsPage } from "./pages/MarketsPage";
+import { SessionsPage } from "./pages/SessionsPage";
 
 export function App() {
   // One socket for the app's lifetime; startConnection is idempotent, so
@@ -18,6 +19,7 @@ export function App() {
       <Routes>
         <Route path="/docs" element={<DocsPage />} />
         <Route path="/markets" element={<MarketsPage />} />
+        <Route path="/sessions" element={<SessionsPage />} />
         <Route path="/:symbol?/:timeframe?" element={<LensPage />} />
       </Routes>
     </BrowserRouter>
