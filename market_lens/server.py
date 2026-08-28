@@ -66,6 +66,7 @@ from market_lens.positioning import (
     parse_bitfinex_sizes,
 )
 from market_lens import health
+from market_lens import sessions as hub_sessions
 from market_lens.grouping import book_span, grouping_ladder, resolve_bin
 from market_lens.stablecoins import (
     LLAMA_CHART_URL, parse_supply_series, summarise as summarise_stables,
@@ -308,6 +309,12 @@ class LensState:
         # reports the age of the most recent trade from ANY venue.
         self.started_at: float = time.time()
         self.last_trade_at: float | None = None
+        # A dead broadcast loop used to be invisible: trades kept arriving,
+        # the archive kept filling, and only the tape stopped. These make it
+        # something /api/health can see.
+        self.last_trade_broadcast: float | None = None
+        self.last_depth_broadcast: float | None = None
+        self.loop_restarts: dict[str, int] = {}
 
     def on_book(self, venue: str, symbol: str, book: dict) -> None:
         self.books[(symbol, venue)] = book
@@ -754,6 +761,50 @@ async def _push_positioning() -> None:
 TRADE_BROADCAST_SECONDS = 0.1
 
 
+async def send_or_drop(ws: web.WebSocketResponse, message: str) -> bool:
+    """Send to one client. False (and the client is dropped) on any failure.
+
+    A broadcast loop must never die because one socket did. `ws.closed` is
+    checked before the await, but the socket can close DURING it, and the
+    resulting ConnectionResetError used to escape `while True` and kill the
+    task outright — silently, permanently, for every other client too.
+    That is exactly what took the trade tape down on 2026-08-28: the loop
+    ticks ten times a second, so it wins that race far more often than the
+    1Hz depth loop, and a burst of probe connections opening and closing
+    was enough to end it.
+    """
+    if ws.closed:
+        return False
+    try:
+        await ws.send_str(message)
+        return True
+    except Exception:  # noqa: BLE001 — a broken client is not our problem
+        STATE.clients.pop(ws, None)
+        return False
+
+
+def supervise(factory, name: str):
+    """Restart a loop that dies, and say so.
+
+    Every long-lived loop here was launched with create_task and never
+    awaited, so an exception in one vanished into a Task nobody inspects.
+    The tape did not degrade when it broke, it simply stopped, and nothing
+    anywhere said why.
+    """
+    async def runner() -> None:
+        while True:
+            try:
+                await factory()
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:  # noqa: BLE001 — restart, loudly
+                print(f"LOOP {name} died: {error.__class__.__name__}: {error} "
+                      f"— restarting in 2s", flush=True)
+                STATE.loop_restarts[name] = STATE.loop_restarts.get(name, 0) + 1
+                await asyncio.sleep(2)
+    return runner()
+
+
 async def trade_broadcast_loop() -> None:
     """Push queued prints ~10x a second, one message per symbol.
 
@@ -774,9 +825,10 @@ async def trade_broadcast_loop() -> None:
                 continue  # nobody is looking: never pay for the JSON
             message = fastjson.dumps_str({"type": "trades", "symbol": symbol,
                                           "trades": batch})
-            for ws, sub in list(STATE.clients.items()):
-                if sub["symbol"] == symbol and not ws.closed:
-                    await ws.send_str(message)
+            for ws, subscription in list(STATE.clients.items()):
+                if subscription["symbol"] == symbol:
+                    await send_or_drop(ws, message)
+        STATE.last_trade_broadcast = time.time()
 
 
 STABLECOIN_POLL_SECONDS = 3600
@@ -807,6 +859,39 @@ async def stablecoin_poll() -> None:
             await asyncio.sleep(STABLECOIN_POLL_SECONDS)
 
 
+# How far back the session clock reads. Long enough that one unusual
+# day cannot swing a share, short enough to describe the market as it is
+# now rather than as it was at the start of the archive.
+SESSION_WINDOW_DAYS = 30
+
+
+async def sessions_handler(request: web.Request) -> web.Response:
+    """Trading-hub sessions with each one's LIVE share of traded volume.
+
+    The arena dashboard shows the same windows with shares frozen from the
+    August study; these come from flow_minutes, so they move. Optional
+    ?symbol= narrows it to one market — BTC's clock and an equity perp's
+    are not the same shape.
+    """
+    symbol = request.query.get("symbol")
+    if symbol is not None and symbol not in SYMBOLS:
+        return web.json_response({"error": "unknown symbol"}, status=400)
+    start_ms = int((time.time() - SESSION_WINDOW_DAYS * 86_400) * 1000)
+    try:
+        by_hour = STORE.volume_by_utc_hour(start_ms, symbol)
+    except Exception as error:  # noqa: BLE001 — a clock without shares still works
+        print(f"sessions query failed: {error.__class__.__name__}: {error}", flush=True)
+        by_hour = {}
+    return web.json_response({
+        "asOf": int(time.time() * 1000),
+        "windowDays": SESSION_WINDOW_DAYS,
+        "symbol": symbol,
+        "totalVolume": round(sum(by_hour.values()), 2),
+        "sessions": hub_sessions.shares(by_hour),
+        "hourly": hub_sessions.hourly_profile(by_hour),
+    })
+
+
 async def health_handler(request: web.Request) -> web.Response:
     """Process and liveness metrics. Cheap by design — no archive counts,
     so it can be polled without becoming the load it measures."""
@@ -817,6 +902,16 @@ async def health_handler(request: web.Request) -> web.Response:
         last_trade_at=STATE.last_trade_at,
         symbols=len(SYMBOLS),
     )
+    now = time.time()
+    # Age of the last actual broadcast. Rising while trades still arrive is
+    # the signature of a dead loop, which is otherwise silent.
+    reading["lastTradeBroadcastAge"] = (
+        None if STATE.last_trade_broadcast is None
+        else round(now - STATE.last_trade_broadcast, 1))
+    reading["lastDepthBroadcastAge"] = (
+        None if STATE.last_depth_broadcast is None
+        else round(now - STATE.last_depth_broadcast, 1))
+    reading["loopRestarts"] = dict(STATE.loop_restarts)
     reading["watchlistSeedMs"] = STATE.watchlist_seed_ms
     reading["bookEmitLevels"] = BOOK_EMIT_LEVELS
     # 503 when degraded so a probe can act on the status line alone.
@@ -1083,8 +1178,8 @@ async def broadcast_depth_loop() -> None:
             if message is None:
                 continue
             for ws in sockets:
-                if not ws.closed:
-                    await ws.send_str(message)
+                await send_or_drop(ws, message)
+            STATE.last_depth_broadcast = time.time()
 
 
 # -------------------------------------------------------------------- klines
@@ -1402,6 +1497,7 @@ def build_app() -> web.Application:
     # only on direct navigation, which is the easiest thing to miss.
     app.router.add_get("/api/markets", markets_handler)
     app.router.add_get("/api/health", health_handler)
+    app.router.add_get("/api/sessions", sessions_handler)
     assets_dir = WEB_DIR / "assets"
     if assets_dir.exists():  # absent until the first `npm run build`
         app.router.add_static("/assets/", assets_dir)
@@ -1505,9 +1601,11 @@ async def main_async() -> None:
                  binance_depth_poll(), binance_futures_depth_poll(), metrics_poll(),
                  liquidation_estimator_poll(),
                  flow_archive_loop(), retention_loop(), backfill_cvd(),
-                 trade_broadcast_loop(), coingecko_poll(), stablecoin_poll(),
+                 supervise(trade_broadcast_loop, "trade_broadcast"),
+                 coingecko_poll(), stablecoin_poll(),
                  positioning_poll(),
-                 heat_ring_loop(), broadcast_depth_loop()):
+                 heat_ring_loop(),
+                 supervise(broadcast_depth_loop, "depth_broadcast")):
         asyncio.create_task(task)
     await asyncio.Event().wait()
 
