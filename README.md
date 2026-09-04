@@ -85,5 +85,14 @@ in-app docs.
 
 ## License
 
-© 2026 devarashs. All rights reserved. The source is public to be read;
-no license to reuse, copy, or redistribute it is granted at this time.
+[GNU AGPL-3.0](LICENSE). Use it, fork it, run it, improve it — and if
+you offer a modified version as a service to others, publish your
+changes under the same terms. That is the whole ask; the copyright stays
+with the author (© 2026 devarashs), who can still license it
+commercially.
+
+One file is under a different license: `app/src/lib/qlh.ts` reimplements
+the open-source TradingView indicator *Quantitative Liquidation Hunter*
+and carries that script's [MPL-2.0](https://www.mozilla.org/MPL/2.0/)
+terms, as its header states. The charting library, TradingView
+Lightweight Charts, is Apache-2.0.
