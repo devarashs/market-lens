@@ -6,8 +6,6 @@ drawn as depth bars on the chart, every large executed trade on a live tape
 with audio, forced liquidations on their own strip, and a recorded history
 of all of it that no venue sells back.
 
-Live instance: **https://market-lens.runsudo.net**
-
 The premise: market structure is where the size sits — price gravitates
 toward large resting liquidity. The caveat the tool embodies: resting
 orders are *claims* (walls get pulled; spoofing is real) while executed
@@ -60,9 +58,9 @@ UI from `app/dist`, so production needs no Node runtime — one process, no
 API keys, only public market-data feeds.
 
 For UI development: `cd app && npm run dev` (HMR, proxied to a local
-collector on 8899) or `npm run dev:vps` to develop against the deployed
-collector's live flow. `npm test` runs the frontend suite;
-`.venv/Scripts/python -m pytest` runs the collector's.
+collector on 8899; set `LENS_COLLECTOR` to point it elsewhere). A second
+collector can run beside the first with `LENS_PORT=8898`. `npm test` runs
+the frontend suite; `.venv/Scripts/python -m pytest` runs the collector's.
 
 ## Recording
 

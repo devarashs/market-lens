@@ -5,16 +5,10 @@ import { defineConfig } from "vite";
 
 // Prod serving stays with the Python collector (it serves app/dist), so the
 // dev server only exists for HMR — it proxies data routes to a collector.
-// Defaults to a local one on 8899. `npm run dev:vps` points it at the
-// deployed collector instead, which is how you get live cross-venue flow
-// (and real liquidations) without running a collector locally;
-// LENS_COLLECTOR overrides the target for anything else.
-const DEPLOYED = "https://market-lens.runsudo.net";
-
-export default defineConfig(({ mode }) => {
-  const collector = mode === "vps"
-    ? DEPLOYED
-    : process.env.LENS_COLLECTOR ?? "http://127.0.0.1:8899";
+// Defaults to a local one on 8899; LENS_COLLECTOR points it at any other
+// instance (a second local one on LENS_PORT, or a remote deployment).
+export default defineConfig(() => {
+  const collector = process.env.LENS_COLLECTOR ?? "http://127.0.0.1:8899";
   const remote = !collector.includes("127.0.0.1");
   return {
     plugins: [react(), tailwindcss()],
