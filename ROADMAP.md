@@ -12,9 +12,9 @@ nothing Done unverified).
       range reads.
 - [x] Collector on the VPS (2026-08-26) behind nginx + Let's Encrypt at
       market-lens.runsudo.net, systemd unit, auto-deploy on push. It is a
-      real 24/7 archive now. **Decommissioned 2026-08-28** — the VPS was
-      removed; the collector runs locally again until a new home is
-      chosen, and `LENS_PORT` allows a second instance beside it.
+      real 24/7 archive now. **Decommissioned** (recorded 2026-09-04) —
+      the VPS was removed; the collector runs locally again until a new
+      home is chosen, and `LENS_PORT` allows a second instance beside it.
 - [x] Retention wired (2026-08-26). `prune_before` had existed for a day
       and *never been called* — the database grew unbounded. Now a loop
       applies a per-table policy: depth 14d, trades/flow/OI 90d, and
