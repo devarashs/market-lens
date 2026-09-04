@@ -7,6 +7,7 @@ threshold for what counts as a "big" trade on the tape.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,7 +17,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = REPO_ROOT / "app" / "dist"
 RECORD_DIR = REPO_ROOT / "data_recorded"
 
-HTTP_PORT = 8899
+# LENS_PORT lets a second instance run beside the everyday one on 8899
+# (screenshot runs, A/B of a branch) without editing this file. A
+# non-integer value fails loudly at import, which beats binding a surprise.
+HTTP_PORT = int(os.environ.get("LENS_PORT", "8899"))
 # Aggregated book push rate. 1s (was 0.4s): the tape streams per-trade on
 # its own messages so nothing felt slows, and the depth aggregation under
 # this tick is the collector's dominant cost on the 1-vCPU VPS.
