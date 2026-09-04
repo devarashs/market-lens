@@ -1,6 +1,14 @@
 /* Quantitative Liquidation Hunter — the indicator set, ported from the
    Pine v6 script of that name.
 
+   LICENSE OF THIS FILE: Mozilla Public License 2.0, unlike the rest of
+   the repository (AGPL-3.0). The original is an open-source TradingView
+   indicator, and every open-source script there is published under
+   MPL-2.0; this port follows the original closely enough to be a
+   derivative of it, and MPL's file-level copyleft therefore applies
+   here. The copyright in the ported logic remains with the indicator's
+   author. Full terms: https://www.mozilla.org/MPL/2.0/
+
    WHERE THIS PORT DELIBERATELY DIFFERS. Pine only has OHLCV, so several
    of the original's features are inferences from candle shape. We have
    the underlying data, and re-deriving a worse version of something we
